@@ -1,0 +1,128 @@
+{
+  "name": "zeropr",
+  "displayName": "ZeroPR",
+  "description": "Local-first collaboration for developers on the same network",
+  "version": "0.1.0",
+  "publisher": "zeropr",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "zeropr.showPeers",
+        "title": "ZeroPR: Show Peers",
+        "icon": "$(radio-tower)"
+      },
+      {
+        "command": "zeropr.startBroadcast",
+        "title": "ZeroPR: Start Broadcasting"
+      },
+      {
+        "command": "zeropr.stopBroadcast",
+        "title": "ZeroPR: Stop Broadcasting"
+      },
+      {
+        "command": "zeropr.requestFile",
+        "title": "ZeroPR: Request File from Peer"
+      },
+      {
+        "command": "zeropr.startCoEdit",
+        "title": "ZeroPR: Start Co-Editing"
+      },
+      {
+        "command": "zeropr.requestFile",
+        "title": "ZeroPR: Request File from Peer",
+        "icon": "$(cloud-download)"
+      }
+    ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "zeropr.requestFile",
+          "when": "view == zeropr.peersView && viewItem == peer",
+          "group": "inline"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "zeropr",
+          "title": "ZeroPR",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "zeropr": [
+        {
+          "id": "zeropr.peersView",
+          "name": "Nearby Peers"
+        },
+        {
+          "id": "zeropr.sessionsView",
+          "name": "Active Sessions"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ZeroPR",
+      "properties": {
+        "zeropr.agentPort": {
+          "type": "number",
+          "default": 8080,
+          "description": "Port for local agent HTTP API"
+        },
+        "zeropr.autoBroadcast": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically broadcast presence when VS Code starts"
+        },
+        "zeropr.displayName": {
+          "type": "string",
+          "default": "",
+          "description": "Your display name (defaults to system username)"
+        },
+        "zeropr.fileWhitelist": {
+          "type": "array",
+          "default": [".js", ".ts", ".jsx", ".tsx", ".py", ".go", ".java", ".cpp", ".c", ".rs", ".vue", ".css", ".html"],
+          "description": "File extensions to broadcast"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "@zeropr/shared": "*",
+    "axios": "^1.6.2",
+    "yjs": "^13.6.10",
+    "y-websocket": "^1.5.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/test-electron": "^2.3.8",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}
+

@@ -1,0 +1,33 @@
+{
+  "name": "zeropr-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first collaboration for developers",
+  "workspaces": [
+    "extension",
+    "shared"
+  ],
+  "scripts": {
+    "build": "npm run build:shared && npm run build:extension && npm run build:agent",
+    "build:shared": "cd shared && npm run build",
+    "build:extension": "cd extension && npm run compile",
+    "build:agent": "cd agent && go build -o bin/zeropr-agent ./cmd/agent",
+    "dev:agent": "cd agent && go run ./cmd/agent",
+    "dev:extension": "cd extension && npm run watch",
+    "test": "npm run test:agent && npm run test:extension",
+    "test:agent": "cd agent && go test ./...",
+    "test:extension": "cd extension && npm test",
+    "clean": "rm -rf node_modules extension/node_modules shared/node_modules extension/out agent/bin",
+    "lint:go": "cd agent && golangci-lint run",
+    "format:go": "cd agent && go fmt ./...",
+    "format:ts": "prettier --write \"**/*.{ts,tsx,json,md}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}
+

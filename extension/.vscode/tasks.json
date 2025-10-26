@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm: watch",
+      "type": "shell",
+      "command": "npm run watch",
+      "problemMatcher": "$tsc-watch",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "never"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Start Agent",
+      "type": "shell",
+      "command": "cd ../agent && go run ./cmd/agent",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^(.*)$",
+          "line": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "starting",
+          "endsPattern": "listening"
+        }
+      }
+    }
+  ]
+}
+
