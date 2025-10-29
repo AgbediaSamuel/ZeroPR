@@ -113,9 +113,11 @@ func (s *Service) startDiscovery() {
 				entries := make(chan *zeroconf.ServiceEntry, 100)
 
 				ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+				done := make(chan struct{})
 
 				// Start listening for entries in this goroutine
 				go func() {
+					defer close(done)
 					for entry := range entries {
 						if s.isSelf(entry) {
 							log.Printf("Skipping self: %s", entry.Instance)
@@ -131,12 +133,18 @@ func (s *Service) startDiscovery() {
 					log.Println("Entry channel closed")
 				}()
 
-				err := resolver.Browse(ctx, serviceType, domain, entries)
-				cancel()
+				go func() {
+					<-ctx.Done()
+					close(entries)
+				}()
 
-				if err != nil && err != context.DeadlineExceeded {
+				err := resolver.Browse(ctx, serviceType, domain, entries)
+				if err != nil && err != context.Canceled {
 					log.Printf("Browse error: %v", err)
 				}
+
+				<-done
+				cancel()
 
 				log.Printf("Browse cycle complete, found %d peers", s.registry.Count())
 
