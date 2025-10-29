@@ -140,7 +140,6 @@ func (s *Service) startDiscovery() {
 				}()
 
 				err := resolver.Browse(ctx, serviceType, domain, entries)
-				close(entries)
 				if err != nil && err != context.Canceled && err != context.DeadlineExceeded {
 					log.Printf("Browse error: %v", err)
 				}
