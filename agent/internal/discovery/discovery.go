@@ -135,11 +135,13 @@ func (s *Service) startDiscovery() {
 
 				go func() {
 					<-ctx.Done()
-					close(entries)
+					for range entries {
+					}
 				}()
 
 				err := resolver.Browse(ctx, serviceType, domain, entries)
-				if err != nil && err != context.Canceled {
+				close(entries)
+				if err != nil && err != context.Canceled && err != context.DeadlineExceeded {
 					log.Printf("Browse error: %v", err)
 				}
 
