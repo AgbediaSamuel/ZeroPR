@@ -4,6 +4,7 @@ go 1.25.3
 
 require (
 	github.com/brutella/dnssd v1.2.14 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/miekg/dns v1.1.61 // indirect
 	github.com/vishvananda/netlink v1.2.1-beta.2 // indirect

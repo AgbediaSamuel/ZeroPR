@@ -7,6 +7,8 @@ import (
 )
 
 // TODO: refactor lock and unlocks to use wrapper function instead
+// add a new method that can edit sessions directly in the map
+// instead of using sessionregister.Lock() and Unlock()
 
 type Peer struct {
 	Name string
@@ -23,7 +25,7 @@ type Registry struct {
 // constructor
 func NewRegister() *Registry {
 	return &Registry{
-		peers : make(map[string]Peer),
+		peers: make(map[string]Peer),
 	}
 }
 
@@ -61,7 +63,7 @@ func (r *Registry) Get(host string) Peer {
 func (r *Registry) GetAll() []Peer {
 	r.Key.RLock()
 	iterator := maps.Values(r.peers)
-	keys := slices.Collect(iterator)
+	values := slices.Collect(iterator)
 	r.Key.RUnlock()
-	return keys
+	return values
 }
