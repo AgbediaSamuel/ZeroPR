@@ -1,1 +1,6 @@
 agent/agent
+node_modules
+.vscode
+*.vsix
+out/
+**/vsc-extension-quickstart.md

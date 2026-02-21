@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"os"
 
 	"github.com/brutella/dnssd"
 )
@@ -44,11 +45,15 @@ func startDiscovery() {
 	ctx, cancel = context.WithCancel(context.Background())
 	//  go routine for broadcasting in background
 	go responder.Respond(ctx)
+	host, _ := os.Hostname()
 
+	// using os hostname instead of the Host entry from entry
+	// because dnssd is doing some crazy parsing
+	// check service.go in github.com/brutella/dnssd
 	addFn := func(entry dnssd.BrowseEntry) {
 		register.Add(&Peer{
 			Name: entry.Name,
-			Host: entry.Host,
+			Host: host,
 			LastSeen: time.Now().Format(time.Kitchen),
 		})
 	}

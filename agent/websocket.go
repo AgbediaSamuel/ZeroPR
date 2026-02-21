@@ -24,6 +24,9 @@ func wsServer(w http.ResponseWriter, req *http.Request) {
 	rerr := json.Unmarshal(msg, &ur)
 	errorhandler(rerr)
 	current := sessionregister.Get(ur.ID)
+	// add a check here to make sure 
+	// Host and Guest fields match hostnames for clients
+	// sending requests to create websocket connections
 	if current.Sender == nil || current.Receiver == nil {
 		if ur.Role == "Host" {
 			current.Sender = conn

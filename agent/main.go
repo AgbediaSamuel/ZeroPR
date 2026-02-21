@@ -13,6 +13,7 @@ import (
 
 // later on, write a function that decodes requests
 // instead of repeating json.NewDecoder everytime
+// ID parameter in UserRequest might be useless (can't remember why I added it anymore lol)
 
 var (
 	started bool
@@ -43,12 +44,17 @@ func startBroadcast(w http.ResponseWriter, req *http.Request) {
 		startDiscovery()
 	}
 	started = true
+	response, _ := json.Marshal(started)
+	w.Header().Set("content-Type", "application/json")
+	w.Write(response)
 }
 
 func stopBroadcast(w http.ResponseWriter, req *http.Request) {
 	cancel()
 	register = NewRegister()
 	started = false
+	response, _ := json.Marshal(started)
+	w.Write(response)
 }
 
 func startSession(w http.ResponseWriter, req *http.Request) {
@@ -68,9 +74,6 @@ func startSession(w http.ResponseWriter, req *http.Request) {
 	errorhandler(err)
 	// resp := fmt.Sprintf()
 	w.Write(idJson)
-
-	// add websocket stuff here
-	// make an http request to wsServer
 	
 }
 
@@ -86,8 +89,6 @@ func joinSession(w http.ResponseWriter, req *http.Request) {
 	errorhandler(err)
 	w.Write(resp)
 
-	// add websocket stuff here
-	// before writing a response back actually
 
 }
 
@@ -126,6 +127,7 @@ func endSession(w http.ResponseWriter, req *http.Request) {
 // }
 
 func main() {
+	test()
 	fmt.Println("This is the entry point for the Go Agent")
 	http.HandleFunc("/api", server)
 	http.HandleFunc("/api/peers", readPeers)
