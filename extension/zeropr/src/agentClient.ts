@@ -16,6 +16,7 @@ interface Peer {
 interface Ws {
     ID: string,
     Role: string
+    Host: string
 }
 
 // maybe write a reusable function for sending different types of responses to the 
@@ -66,7 +67,7 @@ export function wsconn(params: UserRequest) {
         const token: Ws = {
             ID: params.ID!,
             Role: params.Role,
-            Host: params.Host
+            Host: host
         }
         ws.send(JSON.stringify(token))
     }
