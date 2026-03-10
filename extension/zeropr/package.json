@@ -9,15 +9,99 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onView:nodeDependencies"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "zeropr.helloWorld",
         "title": "Hello World"
+      },
+      {
+        "command": "zeropr.startBroadcast",
+        "title": "Start Search" 
+      },
+      {
+        "command": "zeropr.stopBroadcast",
+        "title": "Stop Search"
+      },
+      {
+        "command": "zeropr.createSession",
+        "title": "Create Session"
+      },
+      {
+        "command": "zeropr.joinSession",
+        "title": "Join Session"
+      },
+      {
+        "command": "zeropr.leaveSession",
+        "title": "Leave Session"
+      },
+      {
+        "command": "zeropr.invitePeer",
+        "title": "Invite to Session",
+        "icon": "$(add)"
+      },
+      {
+        "command": "zeropr.refreshPeers",
+        "title": "Refresh Peers",
+        "icon": "$(refresh)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "zeropr.startBroadcast",
+          "when": "view == zeropr.getPeers",
+          "group": "navigation"
+        },
+        {
+          "command": "zeropr.stopBroadcast",
+          "when": "view == zeropr.getPeers",
+          "group": "navigation"
+        },
+        {
+          "command": "zeropr.refreshPeers",
+          "when": "view == zeropr.getPeers",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "zeropr.invitePeer",
+          "when": "view == zeropr.getPeers",
+          "group": "inline"
+        },
+        {
+          "command": "zeropr.leaveSession",
+          "when": "view == zeropr.sessions",
+          "group": "inline"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "zeropr",
+          "title": "ZeroPR",
+          "icon": "assets/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "zeropr": [
+        {
+          "id": "zeropr.getPeers",
+          "name": "Peers"
+        },
+        {
+          "id": "zeropr.sessions",
+          "name": "Sessions"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "pnpm run package",

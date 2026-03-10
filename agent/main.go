@@ -26,6 +26,14 @@ type UserRequest struct {
 	Role string `json:"role"`
 }
 
+type SessionInvite struct {
+	ID        string `json:"id"`
+	Host      string `json:"host"`
+	Guest     string `json:"guest"`
+	FilePath  string `json:"filepath"`
+	CreatedAt string `json:"created_at"`
+}
+
 var sessionregister = NewSessionRegister()
 
 func server(w http.ResponseWriter, req *http.Request) {
@@ -61,35 +69,35 @@ func startSession(w http.ResponseWriter, req *http.Request) {
 	var ur UserRequest
 	err := json.NewDecoder(req.Body).Decode(&ur)
 	errorhandler(err)
-	sessionID := uuid.NewString()
-	idJson, err := json.Marshal(sessionID)
-	sessionregister.Add(&Session{
-		ID : sessionID,
-		Host: ur.Host,
-		FilePath: ur.FilePath,
+	session := Session{
+		ID:        uuid.NewString(),
+		Host:      ur.Host,
+		FilePath:  ur.FilePath,
 		CreatedAt: time.Now().Format(time.Kitchen),
-		Active: true,
-
-	})
+		Active:    true,
+	}
+	sessionregister.Add(&session)
+	resp, err := json.Marshal(session)
 	errorhandler(err)
-	// resp := fmt.Sprintf()
-	w.Write(idJson)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(resp)
 	
 }
 
 func joinSession(w http.ResponseWriter, req *http.Request) {
-	var ur UserRequest
-	err := json.NewDecoder(req.Body).Decode(&ur)
+	var si SessionInvite
+	err := json.NewDecoder(req.Body).Decode(&si)
 	errorhandler(err)
-	current := sessionregister.Get(ur.ID)
-	current.Guest = ur.Host
-	sessionregister.Remove(current.ID)
-	sessionregister.Add(&current)
-	resp, err := json.Marshal("Joined Session")
-	errorhandler(err)
+	sessionregister.Add(&Session{
+		ID:        si.ID,
+		Host:      si.Host,
+		Guest:     si.Guest,
+		FilePath:  si.FilePath,
+		CreatedAt: si.CreatedAt,
+		Active:    true,
+	})
+	resp, _ := json.Marshal("Joined Session")
 	w.Write(resp)
-
-
 }
 
 func leaveSession(w http.ResponseWriter, req *http.Request) {
@@ -107,6 +115,8 @@ func leaveSession(w http.ResponseWriter, req *http.Request) {
 	
 }
 
+// this function does not need to be an http endpoint
+// could be called from leaveSession when the role is equal to host
 func endSession(w http.ResponseWriter, req *http.Request) {
 	var ur UserRequest
 	err := json.NewDecoder(req.Body).Decode(&ur)
@@ -116,6 +126,16 @@ func endSession(w http.ResponseWriter, req *http.Request) {
 	resp, err := json.Marshal(time.Now().Format(time.Kitchen))
 	errorhandler((err))
 	sessionregister.Key.Unlock()
+	w.Write(resp)
+}
+
+func getAllSessions(w http.ResponseWriter, req *http.Request) {
+	var ur UserRequest
+	err := json.NewDecoder(req.Body).Decode(&ur)
+	errorhandler(err)
+	sessions := sessionregister.GetAll()
+	resp, err := json.Marshal(sessions)
+	errorhandler(err)
 	w.Write(resp)
 }
 
@@ -138,6 +158,7 @@ func main() {
 	http.HandleFunc("/api/session/join", joinSession)
 	http.HandleFunc("/api/session/leave", leaveSession)
 	http.HandleFunc("/api/session/end", endSession)
+	http.HandleFunc("/api/sessions", getAllSessions)
 	// http.HandleFunc("api/broadcast/status")
 
 	err := http.ListenAndServe(":9080", nil)

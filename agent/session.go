@@ -8,15 +8,18 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// TODO: figure out a way to isolate what websocket connection gets sent
+// to a user
+
 type Session struct {
-	ID string
-	Host string
-	Guest string
-	FilePath string
-	CreatedAt string
-	Active bool
-	Sender *websocket.Conn
-	Receiver *websocket.Conn
+	ID string `json:"id"`
+	Host string `json:"host"`
+	Guest string `json:"guest"`
+	FilePath string `json:"filepath"`
+	CreatedAt string `json:"createdat"`
+	Active bool `json:"active"`
+	Sender *websocket.Conn `json:"-"`
+	Receiver *websocket.Conn `json:"-"`
 }
 
 type SessionRegistry struct {

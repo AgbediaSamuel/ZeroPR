@@ -7,7 +7,7 @@ interface UserRequest {
     FilePath?: string,
 }
 
-interface Peer {
+export interface Peer {
     Name: string,
     Host: string,
     LastSeen: string
@@ -15,8 +15,25 @@ interface Peer {
 
 interface Ws {
     ID: string,
-    Role: string
+    Role: string,
     Host: string
+}
+
+export interface Session {
+    ID: string,
+    Host: string,
+    Guest: string,
+    FilePath: string,
+    CreatedAt: string,
+    Active: string
+}
+
+export interface SessionInvite {
+    ID: string,
+    Host: string,
+    Guest: string,
+    FilePath: string,
+    CreatedAt: string
 }
 
 // maybe write a reusable function for sending different types of responses to the 
@@ -26,7 +43,7 @@ interface Ws {
 
 const HTTP_URL = "http://localhost:9080"
 const WS_URL = "ws://localhost:9080/ws/session/"
-const host = os.hostname()
+export const host = os.hostname()
 
 export async function apiCall<T>(URL: string, method?:string, request?: any): Promise<T> {
     let data, response
@@ -49,7 +66,11 @@ export async function apiCall<T>(URL: string, method?:string, request?: any): Pr
 }
 
 export async function getPeers(): Promise<Peer[]> {
-    return await apiCall(HTTP_URL + "/api/peers")
+    return await apiCall<Peer[]>(HTTP_URL + "/api/peers")
+}
+
+export async function getSessions(): Promise<Session[]> {
+    return await apiCall<Session[]>(HTTP_URL + "/api/sessions")
 }
 
 export async function startBroadcast(): Promise<Boolean> {
@@ -82,14 +103,19 @@ export function wsconn(params: UserRequest) {
     }
 }
 
-export async function createSession(host: string, role: string) {
+export async function createSession(host: string, role: string): Promise<Session> {
     const request: UserRequest = {
         Host: host,
         Role: role
     }
-    const response = await apiCall<string>(HTTP_URL + "/api/session/create", "POST", request)
-    request.ID = response
+    const session = await apiCall<Session>(HTTP_URL + "/api/session/create", "POST", request)
+    request.ID = session.ID
     wsconn(request)
+    return session
+}
+
+export async function sendInvite(guestHost: string, invite: SessionInvite): Promise<string> {
+    return await apiCall<string>(`http://${guestHost}:9080/api/session/join`, "POST", invite)
 }
 
 export async function joinSession(host:string, role:string, sessionID: string) {
@@ -100,6 +126,29 @@ export async function joinSession(host:string, role:string, sessionID: string) {
     }
     const response = await apiCall<string>(HTTP_URL + "/api/session/join", "POST", request)
     wsconn(request)
+}
+
+export async function leaveSession(host:string, role:string, sessionID:string): Promise<string> {
+    const request: UserRequest = {
+        Host: host,
+        Role: role,
+        ID: sessionID
+    }
+
+    const response = await apiCall<string>(HTTP_URL + "/api/session/leave", "POST", request)
+    return response
+}
+
+export async function invitePeer(peer: Peer) {
+    const session = await createSession(host, "Host")
+    const invite: SessionInvite = {
+        ID: session.ID,
+        Host: session.Host,
+        Guest: peer.Host,
+        FilePath: session.FilePath,
+        CreatedAt: session.CreatedAt
+    }
+    await sendInvite(peer.Host, invite)
 }
 
 export function test() {
