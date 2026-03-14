@@ -110,9 +110,10 @@ func leaveSession(w http.ResponseWriter, req *http.Request) {
 	} else {
 		current.Guest = ""
 	}
-	sessionregister.Remove(current.ID)
-	sessionregister.Add(&current)
-	
+	sessionregister.Update(&current)
+	w.Header().Set("Content-Type", "application/json")
+	resp, _ := json.Marshal("Left session")
+	w.Write(resp)
 }
 
 // this function does not need to be an http endpoint
@@ -130,12 +131,10 @@ func endSession(w http.ResponseWriter, req *http.Request) {
 }
 
 func getAllSessions(w http.ResponseWriter, req *http.Request) {
-	var ur UserRequest
-	err := json.NewDecoder(req.Body).Decode(&ur)
-	errorhandler(err)
 	sessions := sessionregister.GetAll()
 	resp, err := json.Marshal(sessions)
 	errorhandler(err)
+	w.Header().Set("Content-Type", "application/json")
 	w.Write(resp)
 }
 

@@ -1,10 +1,10 @@
 import * as os from "os"
 
 interface UserRequest {
-    Host: string,
-    Role: string,
-    ID?: string,
-    FilePath?: string,
+    host: string,
+    role: string,
+    id?: string,
+    filepath?: string,
 }
 
 export interface Peer {
@@ -14,39 +14,33 @@ export interface Peer {
 }
 
 interface Ws {
-    ID: string,
-    Role: string,
-    Host: string
+    id: string,
+    role: string,
+    host: string
 }
 
 export interface Session {
-    ID: string,
-    Host: string,
-    Guest: string,
-    FilePath: string,
-    CreatedAt: string,
-    Active: string
+    id: string,
+    host: string,
+    guest: string,
+    filepath: string,
+    createdat: string,
+    active: string
 }
 
 export interface SessionInvite {
-    ID: string,
-    Host: string,
-    Guest: string,
-    FilePath: string,
-    CreatedAt: string
+    id: string,
+    host: string,
+    guest: string,
+    filepath: string,
+    created_at: string
 }
 
-// maybe write a reusable function for sending different types of responses to the 
-// backend
-// maybe the if block for apicall can be simplified later on lol
-// add generics to every call and do something with the http responses
-
 const HTTP_URL = "http://localhost:9080"
-const WS_URL = "ws://localhost:9080/ws/session/"
 export const host = os.hostname()
 
-export async function apiCall<T>(URL: string, method?:string, request?: any): Promise<T> {
-    let data, response
+export async function apiCall<T>(URL: string, method?: string, request?: any): Promise<T> {
+    let response
     if (request) {
         response = await fetch(URL, {
             method: method,
@@ -56,13 +50,10 @@ export async function apiCall<T>(URL: string, method?:string, request?: any): Pr
             },
             body: JSON.stringify(request)
         })
-        data = await response.json() as T
-        return data
-    } 
-    response = await fetch(URL)
-    data = await response.json() as T
-    return data
-    
+    } else {
+        response = await fetch(URL)
+    }
+    return await response.json() as T
 }
 
 export async function getPeers(): Promise<Peer[]> {
@@ -81,78 +72,68 @@ export async function stopBroadcast(): Promise<Boolean> {
     return await apiCall(HTTP_URL + "/api/broadcast/stop")
 }
 
-export function wsconn(params: UserRequest) {
-
-    const ws = new WebSocket(WS_URL)
+export function wsconn(targetHost: string, params: UserRequest, onReady?: () => void): WebSocket {
+    const url = `ws://${targetHost}:9080/ws/session/${params.id}`
+    const ws = new WebSocket(url)
+    ws.binaryType = 'arraybuffer'
     ws.onopen = () => {
         const token: Ws = {
-            ID: params.ID!,
-            Role: params.Role,
-            Host: host
+            id: params.id!,
+            role: params.role,
+            host: host
         }
         ws.send(JSON.stringify(token))
+        onReady?.()
     }
-
-    ws.onmessage = (event) => {
-        console.log(event.data)
-        // just print for now
-    }
-
-    ws.onclose = () => {
-        
-    }
+    ws.onclose = () => {}
+    return ws
 }
 
-export async function createSession(host: string, role: string): Promise<Session> {
+export async function createSession(filepath: string, onReady?: () => void): Promise<{session: Session, ws: WebSocket}> {
     const request: UserRequest = {
-        Host: host,
-        Role: role
+        host: host,
+        role: "Host",
+        filepath: filepath
     }
     const session = await apiCall<Session>(HTTP_URL + "/api/session/create", "POST", request)
-    request.ID = session.ID
-    wsconn(request)
-    return session
+    request.id = session.id
+    const ws = wsconn("localhost", request, onReady)
+    return { session, ws }
 }
 
 export async function sendInvite(guestHost: string, invite: SessionInvite): Promise<string> {
     return await apiCall<string>(`http://${guestHost}:9080/api/session/join`, "POST", invite)
 }
 
-export async function joinSession(host:string, role:string, sessionID: string) {
+export async function joinSession(session: Session, onReady?: () => void): Promise<WebSocket> {
     const request: UserRequest = {
-        Host: host,
-        Role: role,
-        ID: sessionID
+        host: host,
+        role: "Guest",
+        id: session.id
     }
-    const response = await apiCall<string>(HTTP_URL + "/api/session/join", "POST", request)
-    wsconn(request)
+    // connect to the host's agent for the relay
+    const ws = wsconn(session.host, request, onReady)
+    return ws
 }
 
-export async function leaveSession(host:string, role:string, sessionID:string): Promise<string> {
+export async function leaveSession(sessionID: string, role: string): Promise<string> {
     const request: UserRequest = {
-        Host: host,
-        Role: role,
-        ID: sessionID
+        host: host,
+        role: role,
+        id: sessionID
     }
-
-    const response = await apiCall<string>(HTTP_URL + "/api/session/leave", "POST", request)
-    return response
+    return await apiCall<string>(HTTP_URL + "/api/session/leave", "POST", request)
 }
 
-export async function invitePeer(peer: Peer) {
-    const session = await createSession(host, "Host")
+export async function invitePeer(peer: Peer, filepath: string, onReady?: () => void): Promise<{session: Session, ws: WebSocket}> {
+    const { session, ws } = await createSession(filepath, onReady)
     const invite: SessionInvite = {
-        ID: session.ID,
-        Host: session.Host,
-        Guest: peer.Host,
-        FilePath: session.FilePath,
-        CreatedAt: session.CreatedAt
+        id: session.id,
+        host: host,
+        guest: peer.Host,
+        filepath: filepath,
+        created_at: session.createdat
     }
     await sendInvite(peer.Host, invite)
+    return { session, ws }
 }
-
-export function test() {
-    console.log(os.hostname())
-}
-
-test()

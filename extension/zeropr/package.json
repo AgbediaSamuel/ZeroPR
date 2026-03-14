@@ -10,7 +10,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:nodeDependencies"
+    "onView:zeropr.getPeers"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -33,7 +33,8 @@
       },
       {
         "command": "zeropr.joinSession",
-        "title": "Join Session"
+        "title": "Join Session",
+        "icon": "$(play)"
       },
       {
         "command": "zeropr.leaveSession",
@@ -47,6 +48,11 @@
       {
         "command": "zeropr.refreshPeers",
         "title": "Refresh Peers",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "zeropr.refreshSessions",
+        "title": "Refresh Sessions",
         "icon": "$(refresh)"
       }
     ],
@@ -66,12 +72,22 @@
           "command": "zeropr.refreshPeers",
           "when": "view == zeropr.getPeers",
           "group": "navigation"
+        },
+        {
+          "command": "zeropr.refreshSessions",
+          "when": "view == zeropr.sessions",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
         {
           "command": "zeropr.invitePeer",
           "when": "view == zeropr.getPeers",
+          "group": "inline"
+        },
+        {
+          "command": "zeropr.joinSession",
+          "when": "view == zeropr.sessions",
           "group": "inline"
         },
         {
@@ -116,6 +132,11 @@
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vscode-test"
+  },
+  "dependencies": {
+    "yjs": "^13.6.0",
+    "y-protocols": "^1.0.6",
+    "lib0": "^0.2.88"
   },
   "devDependencies": {
     "@types/vscode": "^1.109.0",

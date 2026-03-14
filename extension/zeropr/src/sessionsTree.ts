@@ -4,10 +4,11 @@ import { Session, getSessions, host } from './agentClient'
 
 export class Sessions implements Tree<Session> {
     getTreeItem(element: Session): Item {
-        const other = (element.Host === host) ? element.Guest : element.Host
+        const other = (element.host === host) ? element.guest : element.host
         const session = new Item(`Session with ${other}`)
-        session.description = element.ID
-        session.tooltip = `Created: ${element.CreatedAt}`
+        session.description = element.id.slice(0, 8)
+        session.tooltip = `Created: ${element.createdat}`
+        session.contextValue = (element.host === host) ? "ownSession" : "invitation"
         return session
     }
 

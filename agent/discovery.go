@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"time"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/brutella/dnssd"
 )
@@ -30,7 +31,7 @@ func startDiscovery() {
 	setup := dnssd.Config{
 		Name:   "ZeroPR",
 		Type:   "_zeropr._tcp",
-		Port:   8080,
+		Port:   9080,
 	}
 
 	service, err := dnssd.NewService(setup)
@@ -46,14 +47,13 @@ func startDiscovery() {
 	//  go routine for broadcasting in background
 	go responder.Respond(ctx)
 	host, _ := os.Hostname()
-
-	// using os hostname instead of the Host entry from entry
-	// because dnssd is doing some crazy parsing
-	// check service.go in github.com/brutella/dnssd
 	addFn := func(entry dnssd.BrowseEntry) {
+		if strings.HasPrefix(host, entry.Host) {
+			return
+		}
 		register.Add(&Peer{
 			Name: entry.Name,
-			Host: host,
+			Host: entry.Host,
 			LastSeen: time.Now().Format(time.Kitchen),
 		})
 	}

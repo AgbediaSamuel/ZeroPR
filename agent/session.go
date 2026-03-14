@@ -54,6 +54,12 @@ func (sr *SessionRegistry) Remove(ID string) {
 	sr.Key.Unlock()
 }
 
+func (sr *SessionRegistry) Update(session *Session) {
+	sr.Key.Lock()
+	sr.sessions[session.ID] = *session
+	sr.Key.Unlock()
+}
+
 func (sr *SessionRegistry) Get(ID string) Session {
 	sr.Key.RLock()
 	defer sr.Key.RUnlock()
@@ -65,6 +71,7 @@ func (sr *SessionRegistry) Get(ID string) Session {
 
 func (sr *SessionRegistry) GetAll() []Session {
 	sr.Key.RLock()
+	defer sr.Key.RUnlock()
 	iterator := maps.Values(sr.sessions)
 	values := slices.Collect(iterator)
 	return values

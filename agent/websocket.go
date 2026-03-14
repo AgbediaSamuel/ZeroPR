@@ -33,9 +33,7 @@ func wsServer(w http.ResponseWriter, req *http.Request) {
 		} else {
 			current.Receiver = conn
 		}
-		// replace these with update method on registry struct later
-		sessionregister.Remove(current.ID)
-		sessionregister.Add(&current)
+		sessionregister.Update(&current)
 	}
 
 	// waiting for both to be satisfied before entering websocket relay loop
@@ -48,14 +46,19 @@ func wsServer(w http.ResponseWriter, req *http.Request) {
 	}
 
 	for {
-		msgtype, msg, _ := conn.ReadMessage()
-		// errorhandler(err)
+		msgtype, msg, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
 		var other *websocket.Conn
 		if ur.Role == "Host" {
 			other = current.Receiver
 		} else {
 			other = current.Sender
 		}
-		other.WriteMessage(msgtype, msg)
+		if err := other.WriteMessage(msgtype, msg); err != nil {
+			break
+		}
 	}
+	conn.Close()
 }
