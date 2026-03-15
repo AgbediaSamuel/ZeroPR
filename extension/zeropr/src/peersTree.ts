@@ -5,8 +5,8 @@ import { Peer, getPeers } from './agentClient'
 
 export class Peers implements Tree<Peer> {
     getTreeItem(element: Peer): Item {
-        const peer = new Item(element.Host)
-        // peer.description = element.Host
+        const peer = new Item(element.Name)
+        peer.description = element.Host
         peer.tooltip = `Last Seen: ${element.LastSeen}`
         return peer
     }
