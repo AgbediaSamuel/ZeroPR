@@ -51,9 +51,16 @@ func startDiscovery() {
 		if strings.HasPrefix(host, entry.Host) {
 			return
 		}
+		var peerIP string
+		for _, ip := range entry.IPs {
+			if ip.To4() != nil {
+				peerIP = ip.String()
+				break
+			}
+		}
 		register.Add(&Peer{
-			Name: entry.Name,
-			Host: entry.Host,
+			Name: entry.Host,
+			Host: peerIP,
 			LastSeen: time.Now().Format(time.Kitchen),
 		})
 	}
