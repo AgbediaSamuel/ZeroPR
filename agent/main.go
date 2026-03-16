@@ -105,28 +105,45 @@ func leaveSession(w http.ResponseWriter, req *http.Request) {
 	err := json.NewDecoder(req.Body).Decode(&ur)
 	errorhandler(err)
 	current := sessionregister.Get(ur.ID)
-	if ur.Role == "Host" {
-		current.Host = ""
-	} else {
+	if ur.Role == "Guest" {
 		current.Guest = ""
+		if current.Receiver != nil {
+			current.Receiver.Close()
+			current.Receiver = nil
+		}
+		sessionregister.Update(&current)
+		w.Header().Set("Content-Type", "application/json")
+		resp, _ := json.Marshal("Left session")
+		w.Write(resp)
+	} else {
+		// host leaving = end session
+		if current.Sender != nil {
+			current.Sender.Close()
+		}
+		if current.Receiver != nil {
+			current.Receiver.Close()
+		}
+		sessionregister.Remove(ur.ID)
+		w.Header().Set("Content-Type", "application/json")
+		resp, _ := json.Marshal("Session ended")
+		w.Write(resp)
 	}
-	sessionregister.Update(&current)
-	w.Header().Set("Content-Type", "application/json")
-	resp, _ := json.Marshal("Left session")
-	w.Write(resp)
 }
 
-// this function does not need to be an http endpoint
-// could be called from leaveSession when the role is equal to host
 func endSession(w http.ResponseWriter, req *http.Request) {
 	var ur UserRequest
 	err := json.NewDecoder(req.Body).Decode(&ur)
 	errorhandler(err)
-	sessionregister.Key.Lock()
-	delete(sessionregister.sessions, ur.ID)
-	resp, err := json.Marshal(time.Now().Format(time.Kitchen))
-	errorhandler((err))
-	sessionregister.Key.Unlock()
+	current := sessionregister.Get(ur.ID)
+	if current.Sender != nil {
+		current.Sender.Close()
+	}
+	if current.Receiver != nil {
+		current.Receiver.Close()
+	}
+	sessionregister.Remove(ur.ID)
+	w.Header().Set("Content-Type", "application/json")
+	resp, _ := json.Marshal("Session ended")
 	w.Write(resp)
 }
 

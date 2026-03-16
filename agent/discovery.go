@@ -66,7 +66,12 @@ func startDiscovery() {
 	}
 
 	rmFn := func(entry dnssd.BrowseEntry) {
-		register.Remove(entry.Host)
+		for _, ip := range entry.IPs {
+			if ip.To4() != nil {
+				register.Remove(ip.String())
+				return
+			}
+		}
 	}
 
 	serviceName := setup.Type+"."+service.Domain+"."

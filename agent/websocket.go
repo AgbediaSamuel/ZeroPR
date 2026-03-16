@@ -27,14 +27,12 @@ func wsServer(w http.ResponseWriter, req *http.Request) {
 	// add a check here to make sure 
 	// Host and Guest fields match hostnames for clients
 	// sending requests to create websocket connections
-	if current.Sender == nil || current.Receiver == nil {
-		if ur.Role == "Host" {
-			current.Sender = conn
-		} else {
-			current.Receiver = conn
-		}
-		sessionregister.Update(&current)
+	if ur.Role == "Host" {
+		current.Sender = conn
+	} else {
+		current.Receiver = conn
 	}
+	sessionregister.Update(&current)
 
 	// waiting for both to be satisfied before entering websocket relay loop
 	for {

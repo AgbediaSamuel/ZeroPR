@@ -38,7 +38,13 @@
       },
       {
         "command": "zeropr.leaveSession",
-        "title": "Leave Session"
+        "title": "Leave Session",
+        "icon": "$(close)"
+      },
+      {
+        "command": "zeropr.endSession",
+        "title": "End Session",
+        "icon": "$(close)"
       },
       {
         "command": "zeropr.invitePeer",
@@ -87,12 +93,17 @@
         },
         {
           "command": "zeropr.joinSession",
-          "when": "view == zeropr.sessions",
+          "when": "view == zeropr.sessions && viewItem == invitation",
+          "group": "inline"
+        },
+        {
+          "command": "zeropr.endSession",
+          "when": "view == zeropr.sessions && viewItem == ownSession",
           "group": "inline"
         },
         {
           "command": "zeropr.leaveSession",
-          "when": "view == zeropr.sessions",
+          "when": "view == zeropr.sessions && viewItem == invitation",
           "group": "inline"
         }
       ]

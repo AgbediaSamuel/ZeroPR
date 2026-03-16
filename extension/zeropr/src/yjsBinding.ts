@@ -16,12 +16,14 @@ export class YjsBinding {
 
 		this.ytextObserver = (event, transaction) => {
 			if (transaction.local) { return }
+			console.log('[YjsBinding] remote change, delta:', JSON.stringify(event.delta))
 			this.applyRemoteChanges(event)
 		}
 		ytext.observe(this.ytextObserver)
 
 		this.disposable = vscode.workspace.onDidChangeTextDocument(event => {
 			if (event.document !== this.document || this.isApplyingRemote) { return }
+			console.log('[YjsBinding] local change, changes:', event.contentChanges.length)
 			this.applyLocalChanges(event.contentChanges)
 		})
 	}
