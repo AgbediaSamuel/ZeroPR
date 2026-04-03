@@ -5,7 +5,8 @@ import { Session, getSessions, host } from './agentClient'
 export class Sessions implements Tree<Session> {
     getTreeItem(element: Session): Item {
         const other = (element.host === host) ? element.guest : element.host
-        const session = new Item(`Session with ${other}`)
+        const label = other ? `Session with ${other}` : 'Waiting for guest...'
+        const session = new Item(label)
         session.description = element.id.slice(0, 8)
         session.tooltip = `Created: ${element.createdat}`
         session.contextValue = (element.host === host) ? "ownSession" : "invitation"

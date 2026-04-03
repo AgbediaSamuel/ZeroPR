@@ -14,6 +14,7 @@ import (
 type Session struct {
 	ID string `json:"id"`
 	Host string `json:"host"`
+	RelayHost string `json:"relayHost"`
 	Guest string `json:"guest"`
 	FilePath string `json:"filepath"`
 	CreatedAt string `json:"createdat"`
@@ -21,6 +22,9 @@ type Session struct {
 	Sender *websocket.Conn `json:"-"`
 	Receiver *websocket.Conn `json:"-"`
 }
+
+// per-connection write mutexes to prevent concurrent writes to gorilla/websocket
+var connMu sync.Map
 
 type SessionRegistry struct {
 	sessions map[string]Session

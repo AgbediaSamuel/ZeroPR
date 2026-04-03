@@ -5,6 +5,7 @@ import (
 	"fmt"
 	_ "io"
 	_ "log"
+	"net"
 	"net/http"
 	"time"
 
@@ -36,6 +37,14 @@ type SessionInvite struct {
 
 var sessionregister = NewSessionRegister()
 
+func relayHostFromRemoteAddr(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err == nil {
+		return host
+	}
+	return remoteAddr
+}
+
 func server(w http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(w, "Server running")
 }
@@ -58,7 +67,9 @@ func startBroadcast(w http.ResponseWriter, req *http.Request) {
 }
 
 func stopBroadcast(w http.ResponseWriter, req *http.Request) {
-	cancel()
+	if cancel != nil {
+		cancel()
+	}
 	register = NewRegister()
 	started = false
 	response, _ := json.Marshal(started)
@@ -91,6 +102,7 @@ func joinSession(w http.ResponseWriter, req *http.Request) {
 	sessionregister.Add(&Session{
 		ID:        si.ID,
 		Host:      si.Host,
+		RelayHost: relayHostFromRemoteAddr(req.RemoteAddr),
 		Guest:     si.Guest,
 		FilePath:  si.FilePath,
 		CreatedAt: si.CreatedAt,

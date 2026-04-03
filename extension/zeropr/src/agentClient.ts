@@ -22,6 +22,7 @@ interface Ws {
 export interface Session {
     id: string,
     host: string,
+    relayHost: string,
     guest: string,
     filepath: string,
     createdat: string,
@@ -73,7 +74,7 @@ export async function stopBroadcast(): Promise<Boolean> {
 }
 
 export function wsconn(targetHost: string, params: UserRequest): Promise<WebSocket> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         const url = `ws://${targetHost}:9080/ws/session/${params.id}`
         const ws = new WebSocket(url)
         ws.binaryType = 'arraybuffer'
@@ -86,6 +87,7 @@ export function wsconn(targetHost: string, params: UserRequest): Promise<WebSock
             ws.send(JSON.stringify(token))
             resolve(ws)
         }
+        ws.onerror = (err) => reject(new Error(`WebSocket connection failed to ${targetHost}`))
         ws.onclose = () => {}
     })
 }
@@ -113,7 +115,7 @@ export async function joinSession(session: Session): Promise<WebSocket> {
         id: session.id
     }
     // connect to the host's agent for the relay
-    const ws = await wsconn(session.host, request)
+    const ws = await wsconn(session.relayHost, request)
     return ws
 }
 

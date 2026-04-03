@@ -13,6 +13,7 @@ let activeDoc: Y.Doc | null = null
 let activeProvider: YjsProvider | null = null
 let activeBinding: YjsBinding | null = null
 let activeSessionId: string | null = null
+let activeSandboxFilename: string | null = null
 let originalFilePath: string | null = null
 let isEndingSession = false
 let zeroprFs: ZeroPRFileSystem
@@ -37,18 +38,26 @@ function cleanupYjs() {
 	activeDoc = null
 }
 
-function cleanupSession() {
+async function cleanupSession() {
 	cleanupYjs()
 	if (activeWs) {
 		activeWs.close()
 		activeWs = null
 	}
-	if (activeSessionId) {
-		const uri = vscode.Uri.parse(`zeropr://session-${activeSessionId}`)
+	// close the sandbox editor tab
+	const tabs = vscode.window.tabGroups.all.flatMap(g => g.tabs)
+	for (const tab of tabs) {
+		if (tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === 'zeropr') {
+			await vscode.window.tabGroups.close(tab)
+		}
+	}
+	if (activeSessionId && activeSandboxFilename) {
+		const uri = vscode.Uri.parse(`zeropr://session-${activeSessionId}/${activeSandboxFilename}`)
 		try { zeroprFs.delete(uri) } catch {}
 	}
 	activeDocument = null
 	activeSessionId = null
+	activeSandboxFilename = null
 	originalFilePath = null
 	isEndingSession = false
 }
@@ -63,7 +72,7 @@ async function openSandbox(sessionId: string, filename: string, content: string)
 }
 
 function setupWsOnClose(ws: WebSocket, sessionsView: Sessions, isHost: boolean) {
-	ws.onclose = () => {
+	ws.onclose = async () => {
 		if (isEndingSession) { return }
 
 		if (isHost && activeDoc && activeSessionId) {
@@ -79,7 +88,11 @@ function setupWsOnClose(ws: WebSocket, sessionsView: Sessions, isHost: boolean) 
 			})
 		} else {
 			vscode.window.showInformationMessage('Session ended')
-			cleanupSession()
+			const sessionId = activeSessionId
+			await cleanupSession()
+			if (sessionId) {
+				await endSession(sessionId)
+			}
 			sessionsView.update()
 		}
 	}
@@ -95,6 +108,12 @@ export function activate(context: vscode.ExtensionContext) {
 	const sessionsView = new Sessions()
 	vscode.window.registerTreeDataProvider("zeropr.getPeers", peersView)
 	vscode.window.registerTreeDataProvider("zeropr.sessions", sessionsView)
+
+	const pollInterval = setInterval(() => {
+		peersView.update()
+		sessionsView.update()
+	}, 3000)
+	context.subscriptions.push({ dispose: () => clearInterval(pollInterval) })
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand("zeropr.startBroadcast", () => {
@@ -123,10 +142,11 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 			const fileContent = editor.document.getText()
 			const filePath = editor.document.uri.fsPath
-			const filename = filePath.split('/').pop() || 'untitled'
+			const filename = `[ZeroPR] ${filePath.split('/').pop() || 'untitled'}`
 
 			const { session, ws } = await invitePeer(peer, filePath)
 			activeSessionId = session.id
+			activeSandboxFilename = filename
 			originalFilePath = filePath
 			const doc = await openSandbox(session.id, filename, fileContent)
 			activeDocument = doc
@@ -145,10 +165,11 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 			const fileContent = editor.document.getText()
 			const filePath = editor.document.uri.fsPath
-			const filename = filePath.split('/').pop() || 'untitled'
+			const filename = `[ZeroPR] ${filePath.split('/').pop() || 'untitled'}`
 
 			const { session, ws } = await createSession(filePath)
 			activeSessionId = session.id
+			activeSandboxFilename = filename
 			originalFilePath = filePath
 			const doc = await openSandbox(session.id, filename, fileContent)
 			activeDocument = doc
@@ -176,8 +197,9 @@ export function activate(context: vscode.ExtensionContext) {
 				session = pick.session
 			}
 
-			const filename = session.filepath.split('/').pop() || 'untitled'
+			const filename = `[ZeroPR] ${session.filepath.split('/').pop() || 'untitled'}`
 			activeSessionId = session.id
+			activeSandboxFilename = filename
 
 			const ws = await joinSession(session)
 			const doc = await openSandbox(session.id, filename, '')
@@ -219,6 +241,14 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 			cleanupSession()
 			sessionsView.update()
+		}),
+
+		vscode.commands.registerCommand('zeropr.undo', () => {
+			activeBinding?.undoManager.undo()
+		}),
+
+		vscode.commands.registerCommand('zeropr.redo', () => {
+			activeBinding?.undoManager.redo()
 		}),
 
 		vscode.commands.registerCommand('zeropr.helloWorld', () => {

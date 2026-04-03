@@ -72,6 +72,14 @@ var appendTo = (dest, src) => {
   }
 };
 var from = Array.from;
+var some = (arr, f) => {
+  for (let i = 0; i < arr.length; i++) {
+    if (f(arr[i], i, arr)) {
+      return true;
+    }
+  }
+  return false;
+};
 var isArray = Array.isArray;
 
 // node_modules/.pnpm/lib0@0.2.117/node_modules/lib0/observable.js
@@ -2523,6 +2531,16 @@ var findRootTypeKey = (type) => {
   }
   throw unexpectedCase();
 };
+var isParentOf = (parent, child) => {
+  while (child !== null) {
+    if (child.parent === parent) {
+      return true;
+    }
+    child = /** @type {AbstractType<any>} */
+    child.parent._item;
+  }
+  return false;
+};
 var Snapshot = class {
   /**
    * @param {DeleteSet} ds
@@ -2908,6 +2926,310 @@ var transact = (doc, f, origin = null, local = true) => {
     }
   }
   return result;
+};
+var StackItem = class {
+  /**
+   * @param {DeleteSet} deletions
+   * @param {DeleteSet} insertions
+   */
+  constructor(deletions, insertions) {
+    this.insertions = insertions;
+    this.deletions = deletions;
+    this.meta = /* @__PURE__ */ new Map();
+  }
+};
+var clearUndoManagerStackItem = (tr, um, stackItem) => {
+  iterateDeletedStructs(tr, stackItem.deletions, (item) => {
+    if (item instanceof Item && um.scope.some((type) => type === tr.doc || isParentOf(
+      /** @type {AbstractType<any>} */
+      type,
+      item
+    ))) {
+      keepItem(item, false);
+    }
+  });
+};
+var popStackItem = (undoManager, stack, eventType) => {
+  let _tr = null;
+  const doc = undoManager.doc;
+  const scope = undoManager.scope;
+  transact(doc, (transaction) => {
+    while (stack.length > 0 && undoManager.currStackItem === null) {
+      const store = doc.store;
+      const stackItem = (
+        /** @type {StackItem} */
+        stack.pop()
+      );
+      const itemsToRedo = /* @__PURE__ */ new Set();
+      const itemsToDelete = [];
+      let performedChange = false;
+      iterateDeletedStructs(transaction, stackItem.insertions, (struct) => {
+        if (struct instanceof Item) {
+          if (struct.redone !== null) {
+            let { item, diff } = followRedone(store, struct.id);
+            if (diff > 0) {
+              item = getItemCleanStart(transaction, createID(item.id.client, item.id.clock + diff));
+            }
+            struct = item;
+          }
+          if (!struct.deleted && scope.some((type) => type === transaction.doc || isParentOf(
+            /** @type {AbstractType<any>} */
+            type,
+            /** @type {Item} */
+            struct
+          ))) {
+            itemsToDelete.push(struct);
+          }
+        }
+      });
+      iterateDeletedStructs(transaction, stackItem.deletions, (struct) => {
+        if (struct instanceof Item && scope.some((type) => type === transaction.doc || isParentOf(
+          /** @type {AbstractType<any>} */
+          type,
+          struct
+        )) && // Never redo structs in stackItem.insertions because they were created and deleted in the same capture interval.
+        !isDeleted(stackItem.insertions, struct.id)) {
+          itemsToRedo.add(struct);
+        }
+      });
+      itemsToRedo.forEach((struct) => {
+        performedChange = redoItem(transaction, struct, itemsToRedo, stackItem.insertions, undoManager.ignoreRemoteMapChanges, undoManager) !== null || performedChange;
+      });
+      for (let i = itemsToDelete.length - 1; i >= 0; i--) {
+        const item = itemsToDelete[i];
+        if (undoManager.deleteFilter(item)) {
+          item.delete(transaction);
+          performedChange = true;
+        }
+      }
+      undoManager.currStackItem = performedChange ? stackItem : null;
+    }
+    transaction.changed.forEach((subProps, type) => {
+      if (subProps.has(null) && type._searchMarker) {
+        type._searchMarker.length = 0;
+      }
+    });
+    _tr = transaction;
+  }, undoManager);
+  const res = undoManager.currStackItem;
+  if (res != null) {
+    const changedParentTypes = _tr.changedParentTypes;
+    undoManager.emit("stack-item-popped", [{ stackItem: res, type: eventType, changedParentTypes, origin: undoManager }, undoManager]);
+    undoManager.currStackItem = null;
+  }
+  return res;
+};
+var UndoManager = class extends ObservableV2 {
+  /**
+   * @param {Doc|AbstractType<any>|Array<AbstractType<any>>} typeScope Limits the scope of the UndoManager. If this is set to a ydoc instance, all changes on that ydoc will be undone. If set to a specific type, only changes on that type or its children will be undone. Also accepts an array of types.
+   * @param {UndoManagerOptions} options
+   */
+  constructor(typeScope, {
+    captureTimeout = 500,
+    captureTransaction = (_tr) => true,
+    deleteFilter = () => true,
+    trackedOrigins = /* @__PURE__ */ new Set([null]),
+    ignoreRemoteMapChanges = false,
+    doc = (
+      /** @type {Doc} */
+      isArray(typeScope) ? typeScope[0].doc : typeScope instanceof Doc ? typeScope : typeScope.doc
+    )
+  } = {}) {
+    super();
+    this.scope = [];
+    this.doc = doc;
+    this.addToScope(typeScope);
+    this.deleteFilter = deleteFilter;
+    trackedOrigins.add(this);
+    this.trackedOrigins = trackedOrigins;
+    this.captureTransaction = captureTransaction;
+    this.undoStack = [];
+    this.redoStack = [];
+    this.undoing = false;
+    this.redoing = false;
+    this.currStackItem = null;
+    this.lastChange = 0;
+    this.ignoreRemoteMapChanges = ignoreRemoteMapChanges;
+    this.captureTimeout = captureTimeout;
+    this.afterTransactionHandler = (transaction) => {
+      if (!this.captureTransaction(transaction) || !this.scope.some((type) => transaction.changedParentTypes.has(
+        /** @type {AbstractType<any>} */
+        type
+      ) || type === this.doc) || !this.trackedOrigins.has(transaction.origin) && (!transaction.origin || !this.trackedOrigins.has(transaction.origin.constructor))) {
+        return;
+      }
+      const undoing = this.undoing;
+      const redoing = this.redoing;
+      const stack = undoing ? this.redoStack : this.undoStack;
+      if (undoing) {
+        this.stopCapturing();
+      } else if (!redoing) {
+        this.clear(false, true);
+      }
+      const insertions = new DeleteSet();
+      transaction.afterState.forEach((endClock, client) => {
+        const startClock = transaction.beforeState.get(client) || 0;
+        const len = endClock - startClock;
+        if (len > 0) {
+          addToDeleteSet(insertions, client, startClock, len);
+        }
+      });
+      const now = getUnixTime();
+      let didAdd = false;
+      if (this.lastChange > 0 && now - this.lastChange < this.captureTimeout && stack.length > 0 && !undoing && !redoing) {
+        const lastOp = stack[stack.length - 1];
+        lastOp.deletions = mergeDeleteSets([lastOp.deletions, transaction.deleteSet]);
+        lastOp.insertions = mergeDeleteSets([lastOp.insertions, insertions]);
+      } else {
+        stack.push(new StackItem(transaction.deleteSet, insertions));
+        didAdd = true;
+      }
+      if (!undoing && !redoing) {
+        this.lastChange = now;
+      }
+      iterateDeletedStructs(
+        transaction,
+        transaction.deleteSet,
+        /** @param {Item|GC} item */
+        (item) => {
+          if (item instanceof Item && this.scope.some((type) => type === transaction.doc || isParentOf(
+            /** @type {AbstractType<any>} */
+            type,
+            item
+          ))) {
+            keepItem(item, true);
+          }
+        }
+      );
+      const changeEvent = [{ stackItem: stack[stack.length - 1], origin: transaction.origin, type: undoing ? "redo" : "undo", changedParentTypes: transaction.changedParentTypes }, this];
+      if (didAdd) {
+        this.emit("stack-item-added", changeEvent);
+      } else {
+        this.emit("stack-item-updated", changeEvent);
+      }
+    };
+    this.doc.on("afterTransaction", this.afterTransactionHandler);
+    this.doc.on("destroy", () => {
+      this.destroy();
+    });
+  }
+  /**
+   * Extend the scope.
+   *
+   * @param {Array<AbstractType<any> | Doc> | AbstractType<any> | Doc} ytypes
+   */
+  addToScope(ytypes) {
+    const tmpSet = new Set(this.scope);
+    ytypes = isArray(ytypes) ? ytypes : [ytypes];
+    ytypes.forEach((ytype) => {
+      if (!tmpSet.has(ytype)) {
+        tmpSet.add(ytype);
+        if (ytype instanceof AbstractType ? ytype.doc !== this.doc : ytype !== this.doc) warn("[yjs#509] Not same Y.Doc");
+        this.scope.push(ytype);
+      }
+    });
+  }
+  /**
+   * @param {any} origin
+   */
+  addTrackedOrigin(origin) {
+    this.trackedOrigins.add(origin);
+  }
+  /**
+   * @param {any} origin
+   */
+  removeTrackedOrigin(origin) {
+    this.trackedOrigins.delete(origin);
+  }
+  clear(clearUndoStack = true, clearRedoStack = true) {
+    if (clearUndoStack && this.canUndo() || clearRedoStack && this.canRedo()) {
+      this.doc.transact((tr) => {
+        if (clearUndoStack) {
+          this.undoStack.forEach((item) => clearUndoManagerStackItem(tr, this, item));
+          this.undoStack = [];
+        }
+        if (clearRedoStack) {
+          this.redoStack.forEach((item) => clearUndoManagerStackItem(tr, this, item));
+          this.redoStack = [];
+        }
+        this.emit("stack-cleared", [{ undoStackCleared: clearUndoStack, redoStackCleared: clearRedoStack }]);
+      });
+    }
+  }
+  /**
+   * UndoManager merges Undo-StackItem if they are created within time-gap
+   * smaller than `options.captureTimeout`. Call `um.stopCapturing()` so that the next
+   * StackItem won't be merged.
+   *
+   *
+   * @example
+   *     // without stopCapturing
+   *     ytext.insert(0, 'a')
+   *     ytext.insert(1, 'b')
+   *     um.undo()
+   *     ytext.toString() // => '' (note that 'ab' was removed)
+   *     // with stopCapturing
+   *     ytext.insert(0, 'a')
+   *     um.stopCapturing()
+   *     ytext.insert(0, 'b')
+   *     um.undo()
+   *     ytext.toString() // => 'a' (note that only 'b' was removed)
+   *
+   */
+  stopCapturing() {
+    this.lastChange = 0;
+  }
+  /**
+   * Undo last changes on type.
+   *
+   * @return {StackItem?} Returns StackItem if a change was applied
+   */
+  undo() {
+    this.undoing = true;
+    let res;
+    try {
+      res = popStackItem(this, this.undoStack, "undo");
+    } finally {
+      this.undoing = false;
+    }
+    return res;
+  }
+  /**
+   * Redo last undo operation.
+   *
+   * @return {StackItem?} Returns StackItem if a change was applied
+   */
+  redo() {
+    this.redoing = true;
+    let res;
+    try {
+      res = popStackItem(this, this.redoStack, "redo");
+    } finally {
+      this.redoing = false;
+    }
+    return res;
+  }
+  /**
+   * Are undo steps available?
+   *
+   * @return {boolean} `true` if undo is possible
+   */
+  canUndo() {
+    return this.undoStack.length > 0;
+  }
+  /**
+   * Are redo steps available?
+   *
+   * @return {boolean} `true` if redo is possible
+   */
+  canRedo() {
+    return this.redoStack.length > 0;
+  }
+  destroy() {
+    this.trackedOrigins.delete(this);
+    this.doc.off("afterTransaction", this.afterTransactionHandler);
+    super.destroy();
+  }
 };
 function* lazyStructReaderGenerator(decoder) {
   const numOfStateUpdates = readVarUint(decoder.restDecoder);
@@ -7181,6 +7503,30 @@ var ContentType = class _ContentType {
   }
 };
 var readContentType = (decoder) => new ContentType(typeRefs[decoder.readTypeRef()](decoder));
+var followRedone = (store, id2) => {
+  let nextID = id2;
+  let diff = 0;
+  let item;
+  do {
+    if (diff > 0) {
+      nextID = createID(nextID.client, nextID.clock + diff);
+    }
+    item = getItem(store, nextID);
+    diff = nextID.clock - item.id.clock;
+    nextID = item.redone;
+  } while (nextID !== null && item instanceof Item);
+  return {
+    item,
+    diff
+  };
+};
+var keepItem = (item, keep) => {
+  while (item !== null && item.keep !== keep) {
+    item.keep = keep;
+    item = /** @type {AbstractType<any>} */
+    item.parent._item;
+  }
+};
 var splitItem = (transaction, leftItem, diff) => {
   const { client, clock } = leftItem.id;
   const rightItem = new Item(
@@ -7212,6 +7558,101 @@ var splitItem = (transaction, leftItem, diff) => {
   }
   leftItem.length = diff;
   return rightItem;
+};
+var isDeletedByUndoStack = (stack, id2) => some(
+  stack,
+  /** @param {StackItem} s */
+  (s) => isDeleted(s.deletions, id2)
+);
+var redoItem = (transaction, item, redoitems, itemsToDelete, ignoreRemoteMapChanges, um) => {
+  const doc = transaction.doc;
+  const store = doc.store;
+  const ownClientID = doc.clientID;
+  const redone = item.redone;
+  if (redone !== null) {
+    return getItemCleanStart(transaction, redone);
+  }
+  let parentItem = (
+    /** @type {AbstractType<any>} */
+    item.parent._item
+  );
+  let left = null;
+  let right;
+  if (parentItem !== null && parentItem.deleted === true) {
+    if (parentItem.redone === null && (!redoitems.has(parentItem) || redoItem(transaction, parentItem, redoitems, itemsToDelete, ignoreRemoteMapChanges, um) === null)) {
+      return null;
+    }
+    while (parentItem.redone !== null) {
+      parentItem = getItemCleanStart(transaction, parentItem.redone);
+    }
+  }
+  const parentType = parentItem === null ? (
+    /** @type {AbstractType<any>} */
+    item.parent
+  ) : (
+    /** @type {ContentType} */
+    parentItem.content.type
+  );
+  if (item.parentSub === null) {
+    left = item.left;
+    right = item;
+    while (left !== null) {
+      let leftTrace = left;
+      while (leftTrace !== null && /** @type {AbstractType<any>} */
+      leftTrace.parent._item !== parentItem) {
+        leftTrace = leftTrace.redone === null ? null : getItemCleanStart(transaction, leftTrace.redone);
+      }
+      if (leftTrace !== null && /** @type {AbstractType<any>} */
+      leftTrace.parent._item === parentItem) {
+        left = leftTrace;
+        break;
+      }
+      left = left.left;
+    }
+    while (right !== null) {
+      let rightTrace = right;
+      while (rightTrace !== null && /** @type {AbstractType<any>} */
+      rightTrace.parent._item !== parentItem) {
+        rightTrace = rightTrace.redone === null ? null : getItemCleanStart(transaction, rightTrace.redone);
+      }
+      if (rightTrace !== null && /** @type {AbstractType<any>} */
+      rightTrace.parent._item === parentItem) {
+        right = rightTrace;
+        break;
+      }
+      right = right.right;
+    }
+  } else {
+    right = null;
+    if (item.right && !ignoreRemoteMapChanges) {
+      left = item;
+      while (left !== null && left.right !== null && (left.right.redone || isDeleted(itemsToDelete, left.right.id) || isDeletedByUndoStack(um.undoStack, left.right.id) || isDeletedByUndoStack(um.redoStack, left.right.id))) {
+        left = left.right;
+        while (left.redone) left = getItemCleanStart(transaction, left.redone);
+      }
+      if (left && left.right !== null) {
+        return null;
+      }
+    } else {
+      left = parentType._map.get(item.parentSub) || null;
+    }
+  }
+  const nextClock = getState(store, ownClientID);
+  const nextId = createID(ownClientID, nextClock);
+  const redoneItem = new Item(
+    nextId,
+    left,
+    left && left.lastId,
+    right,
+    right && right.id,
+    parentType,
+    item.parentSub,
+    item.content.copy()
+  );
+  item.redone = nextId;
+  keepItem(redoneItem, true);
+  redoneItem.integrate(transaction, 0);
+  return redoneItem;
 };
 var Item = class _Item extends AbstractStruct {
   /**
@@ -7688,7 +8129,7 @@ async function stopBroadcast() {
   return await apiCall(HTTP_URL + "/api/broadcast/stop");
 }
 function wsconn(targetHost, params2) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const url = `ws://${targetHost}:9080/ws/session/${params2.id}`;
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
@@ -7701,6 +8142,7 @@ function wsconn(targetHost, params2) {
       ws.send(JSON.stringify(token));
       resolve(ws);
     };
+    ws.onerror = (err) => reject(new Error(`WebSocket connection failed to ${targetHost}`));
     ws.onclose = () => {
     };
   });
@@ -7725,7 +8167,7 @@ async function joinSession(session) {
     role: "Guest",
     id: session.id
   };
-  const ws = await wsconn(session.host, request);
+  const ws = await wsconn(session.relayHost, request);
   return ws;
 }
 async function endSession(sessionID) {
@@ -7776,7 +8218,8 @@ var import_vscode2 = require("vscode");
 var Sessions = class {
   getTreeItem(element) {
     const other = element.host === host ? element.guest : element.host;
-    const session = new import_vscode2.TreeItem(`Session with ${other}`);
+    const label = other ? `Session with ${other}` : "Waiting for guest...";
+    const session = new import_vscode2.TreeItem(label);
     session.description = element.id.slice(0, 8);
     session.tooltip = `Created: ${element.createdat}`;
     session.contextValue = element.host === host ? "ownSession" : "invitation";
@@ -8065,7 +8508,10 @@ var YjsProvider = class {
       writeUpdate(encoder, update);
       this.send(toUint8Array(encoder));
     };
-    this.awarenessHandler = ({ added, updated, removed }) => {
+    this.awarenessHandler = ({ added, updated, removed }, origin) => {
+      if (origin === this) {
+        return;
+      }
       const changed = added.concat(updated, removed);
       const encoder = createEncoder();
       writeVarUint(encoder, MSG_AWARENESS);
@@ -8075,21 +8521,17 @@ var YjsProvider = class {
     doc.on("update", this.updateHandler);
     this.awareness.on("update", this.awarenessHandler);
     ws.onmessage = (event) => this.onMessage(event);
-    console.log("[YjsProvider] created, sending sync step 1");
     this.sendSyncStep1();
   }
   onMessage(event) {
-    console.log("[YjsProvider] received message, size:", event.data instanceof ArrayBuffer ? event.data.byteLength : "unknown");
     const data = new Uint8Array(event.data instanceof ArrayBuffer ? event.data : event.data);
     const decoder = createDecoder(data);
     const msgType = readVarUint(decoder);
     if (msgType === MSG_SYNC) {
       const encoder = createEncoder();
       writeVarUint(encoder, MSG_SYNC);
-      const syncMsgType = readSyncMessage(decoder, encoder, this.doc, this);
-      console.log("[YjsProvider] sync message type:", syncMsgType, "ytext length after:", this.doc.getText("content").length);
+      readSyncMessage(decoder, encoder, this.doc, this);
       if (length(encoder) > 1) {
-        console.log("[YjsProvider] sending sync response");
         this.send(toUint8Array(encoder));
       }
     } else if (msgType === MSG_AWARENESS) {
@@ -8103,11 +8545,8 @@ var YjsProvider = class {
     this.send(toUint8Array(encoder));
   }
   send(data) {
-    console.log("[YjsProvider] send, readyState:", this.ws.readyState, "size:", data.byteLength);
     if (this.ws.readyState === 1) {
       this.ws.send(data);
-    } else {
-      console.log("[YjsProvider] SKIPPED send \u2014 ws not open");
     }
   }
   destroy() {
@@ -8119,43 +8558,117 @@ var YjsProvider = class {
 
 // src/yjsBinding.ts
 var vscode3 = __toESM(require("vscode"));
+var ORIGIN_LOCAL = "local";
 var YjsBinding = class {
   ytext;
   doc;
   document;
-  isApplyingRemote = false;
+  text;
+  changeSets = [];
+  remoteQueue = [];
+  processing = false;
   ytextObserver;
   disposable;
+  undoManager;
   constructor(ytext, doc, document2) {
     this.ytext = ytext;
     this.doc = doc;
     this.document = document2;
+    this.text = document2.getText();
+    this.undoManager = new UndoManager(ytext, { trackedOrigins: /* @__PURE__ */ new Set([ORIGIN_LOCAL]) });
     this.ytextObserver = (event, transaction) => {
-      if (transaction.local) {
+      if (transaction.origin === ORIGIN_LOCAL) {
         return;
       }
-      console.log("[YjsBinding] remote change, delta:", JSON.stringify(event.delta));
-      this.applyRemoteChanges(event);
+      this.remoteQueue.push(event);
+      this.processQueue();
     };
     ytext.observe(this.ytextObserver);
     this.disposable = vscode3.workspace.onDidChangeTextDocument((event) => {
-      if (event.document !== this.document || this.isApplyingRemote) {
+      if (event.document !== this.document) {
         return;
       }
-      console.log("[YjsBinding] local change, changes:", event.contentChanges.length);
-      this.applyLocalChanges(event.contentChanges);
+      if (event.contentChanges.length === 0) {
+        return;
+      }
+      if (this.shouldApply(event.contentChanges)) {
+        this.applyLocalChanges(event.contentChanges);
+      }
     });
   }
+  // Eclipse OCT approach: replay incoming VS Code changes against stored
+  // {before, after} snapshots. If the replay matches a known remote change,
+  // it's an echo — skip it. This is deterministic and timing-independent.
+  shouldApply(contentChanges) {
+    const changes = [...contentChanges].sort((a, b) => a.rangeOffset - b.rangeOffset);
+    let newText = this.text;
+    let drift = 0;
+    for (const change of changes) {
+      const start = change.rangeOffset + drift;
+      const end = start + change.rangeLength;
+      newText = newText.substring(0, start) + change.text + newText.substring(end);
+      drift += change.text.length - change.rangeLength;
+    }
+    for (const changeSet of this.changeSets) {
+      let replayText = changeSet.before;
+      let replayDrift = 0;
+      for (const change of changes) {
+        const start = change.rangeOffset + replayDrift;
+        const end = start + change.rangeLength;
+        replayText = replayText.substring(0, start) + change.text + replayText.substring(end);
+        replayDrift += change.text.length - change.rangeLength;
+      }
+      if (replayText === changeSet.after) {
+        this.text = newText;
+        return false;
+      }
+    }
+    this.text = newText;
+    return true;
+  }
+  async processQueue() {
+    if (this.processing) {
+      return;
+    }
+    this.processing = true;
+    try {
+      while (this.remoteQueue.length > 0) {
+        const event = this.remoteQueue.shift();
+        await this.applyRemoteChanges(event);
+      }
+    } catch (err) {
+      console.error("[YjsBinding] error processing remote queue:", err);
+    } finally {
+      this.processing = false;
+    }
+  }
   async applyRemoteChanges(event) {
-    this.isApplyingRemote = true;
+    const before = this.text;
+    let mirrorOffset = 0;
+    let mirrorText = this.text;
+    for (const op of event.delta) {
+      if (op.retain !== void 0) {
+        mirrorOffset += op.retain;
+      } else if (op.insert !== void 0) {
+        const text = typeof op.insert === "string" ? op.insert : "";
+        mirrorText = mirrorText.substring(0, mirrorOffset) + text + mirrorText.substring(mirrorOffset);
+        mirrorOffset += text.length;
+      } else if (op.delete !== void 0) {
+        mirrorText = mirrorText.substring(0, mirrorOffset) + mirrorText.substring(mirrorOffset + op.delete);
+      }
+    }
+    const after = mirrorText;
+    this.text = after;
+    const changeSet = { before, after };
+    this.changeSets.push(changeSet);
     const wsEdit = new vscode3.WorkspaceEdit();
     let offset = 0;
     for (const op of event.delta) {
       if (op.retain !== void 0) {
         offset += op.retain;
       } else if (op.insert !== void 0) {
-        const pos = this.document.positionAt(offset);
         const text = typeof op.insert === "string" ? op.insert : "";
+        const pos = this.document.positionAt(offset);
         wsEdit.insert(this.document.uri, pos, text);
         offset += text.length;
       } else if (op.delete !== void 0) {
@@ -8165,7 +8678,35 @@ var YjsBinding = class {
       }
     }
     await vscode3.workspace.applyEdit(wsEdit);
-    this.isApplyingRemote = false;
+    const index = this.changeSets.indexOf(changeSet);
+    if (index !== -1) {
+      this.changeSets.splice(index, 1);
+    }
+    const ytextContent = this.ytext.toString();
+    const docContent = this.document.getText();
+    if (ytextContent !== docContent) {
+      console.warn("[YjsBinding] DRIFT DETECTED \u2014 resyncing");
+      console.warn("[YjsBinding] Y.Text length:", ytextContent.length, "doc length:", docContent.length);
+      await this.resync();
+    }
+  }
+  async resync() {
+    const content = this.ytext.toString();
+    const before = this.text;
+    this.text = content;
+    const fullRange = new vscode3.Range(
+      this.document.positionAt(0),
+      this.document.positionAt(this.document.getText().length)
+    );
+    const edit = new vscode3.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, content);
+    const changeSet = { before, after: content };
+    this.changeSets.push(changeSet);
+    await vscode3.workspace.applyEdit(edit);
+    const index = this.changeSets.indexOf(changeSet);
+    if (index !== -1) {
+      this.changeSets.splice(index, 1);
+    }
   }
   applyLocalChanges(changes) {
     this.doc.transact(() => {
@@ -8178,7 +8719,7 @@ var YjsBinding = class {
           this.ytext.insert(change.rangeOffset, change.text);
         }
       }
-    });
+    }, ORIGIN_LOCAL);
   }
   destroy() {
     this.ytext.unobserve(this.ytextObserver);
@@ -8239,6 +8780,7 @@ var activeDoc = null;
 var activeProvider = null;
 var activeBinding = null;
 var activeSessionId = null;
+var activeSandboxFilename = null;
 var originalFilePath = null;
 var isEndingSession = false;
 var zeroprFs;
@@ -8260,14 +8802,20 @@ function cleanupYjs() {
   activeProvider = null;
   activeDoc = null;
 }
-function cleanupSession() {
+async function cleanupSession() {
   cleanupYjs();
   if (activeWs) {
     activeWs.close();
     activeWs = null;
   }
-  if (activeSessionId) {
-    const uri = vscode5.Uri.parse(`zeropr://session-${activeSessionId}`);
+  const tabs = vscode5.window.tabGroups.all.flatMap((g) => g.tabs);
+  for (const tab of tabs) {
+    if (tab.input instanceof vscode5.TabInputText && tab.input.uri.scheme === "zeropr") {
+      await vscode5.window.tabGroups.close(tab);
+    }
+  }
+  if (activeSessionId && activeSandboxFilename) {
+    const uri = vscode5.Uri.parse(`zeropr://session-${activeSessionId}/${activeSandboxFilename}`);
     try {
       zeroprFs.delete(uri);
     } catch {
@@ -8275,6 +8823,7 @@ function cleanupSession() {
   }
   activeDocument = null;
   activeSessionId = null;
+  activeSandboxFilename = null;
   originalFilePath = null;
   isEndingSession = false;
 }
@@ -8287,7 +8836,7 @@ async function openSandbox(sessionId, filename, content) {
   return doc;
 }
 function setupWsOnClose(ws, sessionsView, isHost) {
-  ws.onclose = () => {
+  ws.onclose = async () => {
     if (isEndingSession) {
       return;
     }
@@ -8304,7 +8853,11 @@ function setupWsOnClose(ws, sessionsView, isHost) {
       });
     } else {
       vscode5.window.showInformationMessage("Session ended");
-      cleanupSession();
+      const sessionId = activeSessionId;
+      await cleanupSession();
+      if (sessionId) {
+        await endSession(sessionId);
+      }
       sessionsView.update();
     }
   };
@@ -8318,6 +8871,11 @@ function activate(context) {
   const sessionsView = new Sessions();
   vscode5.window.registerTreeDataProvider("zeropr.getPeers", peersView);
   vscode5.window.registerTreeDataProvider("zeropr.sessions", sessionsView);
+  const pollInterval = setInterval(() => {
+    peersView.update();
+    sessionsView.update();
+  }, 3e3);
+  context.subscriptions.push({ dispose: () => clearInterval(pollInterval) });
   context.subscriptions.push(
     vscode5.commands.registerCommand("zeropr.startBroadcast", () => {
       startBroadcast();
@@ -8341,9 +8899,10 @@ function activate(context) {
       }
       const fileContent = editor.document.getText();
       const filePath = editor.document.uri.fsPath;
-      const filename = filePath.split("/").pop() || "untitled";
+      const filename = `[ZeroPR] ${filePath.split("/").pop() || "untitled"}`;
       const { session, ws } = await invitePeer(peer, filePath);
       activeSessionId = session.id;
+      activeSandboxFilename = filename;
       originalFilePath = filePath;
       const doc = await openSandbox(session.id, filename, fileContent);
       activeDocument = doc;
@@ -8361,9 +8920,10 @@ function activate(context) {
       }
       const fileContent = editor.document.getText();
       const filePath = editor.document.uri.fsPath;
-      const filename = filePath.split("/").pop() || "untitled";
+      const filename = `[ZeroPR] ${filePath.split("/").pop() || "untitled"}`;
       const { session, ws } = await createSession(filePath);
       activeSessionId = session.id;
+      activeSandboxFilename = filename;
       originalFilePath = filePath;
       const doc = await openSandbox(session.id, filename, fileContent);
       activeDocument = doc;
@@ -8391,8 +8951,9 @@ function activate(context) {
         }
         session = pick.session;
       }
-      const filename = session.filepath.split("/").pop() || "untitled";
+      const filename = `[ZeroPR] ${session.filepath.split("/").pop() || "untitled"}`;
       activeSessionId = session.id;
+      activeSandboxFilename = filename;
       const ws = await joinSession(session);
       const doc = await openSandbox(session.id, filename, "");
       activeDocument = doc;
@@ -8432,6 +8993,12 @@ function activate(context) {
       }
       cleanupSession();
       sessionsView.update();
+    }),
+    vscode5.commands.registerCommand("zeropr.undo", () => {
+      activeBinding?.undoManager.undo();
+    }),
+    vscode5.commands.registerCommand("zeropr.redo", () => {
+      activeBinding?.undoManager.redo();
     }),
     vscode5.commands.registerCommand("zeropr.helloWorld", () => {
       vscode5.window.showInformationMessage("Hello World from zeropr!");

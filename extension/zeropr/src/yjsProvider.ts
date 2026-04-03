@@ -27,7 +27,9 @@ export class YjsProvider {
 			this.send(encoding.toUint8Array(encoder))
 		}
 
-		this.awarenessHandler = ({ added, updated, removed }) => {
+		// only broadcast awareness changes that originated locally
+		this.awarenessHandler = ({ added, updated, removed }, origin) => {
+			if (origin === this) { return }
 			const changed = added.concat(updated, removed)
 			const encoder = encoding.createEncoder()
 			encoding.writeVarUint(encoder, MSG_AWARENESS)
@@ -40,12 +42,10 @@ export class YjsProvider {
 
 		ws.onmessage = (event) => this.onMessage(event)
 
-		console.log('[YjsProvider] created, sending sync step 1')
 		this.sendSyncStep1()
 	}
 
 	private onMessage(event: MessageEvent) {
-		console.log('[YjsProvider] received message, size:', event.data instanceof ArrayBuffer ? event.data.byteLength : 'unknown')
 		const data = new Uint8Array(event.data instanceof ArrayBuffer ? event.data : event.data)
 		const decoder = decoding.createDecoder(data)
 		const msgType = decoding.readVarUint(decoder)
@@ -53,10 +53,8 @@ export class YjsProvider {
 		if (msgType === MSG_SYNC) {
 			const encoder = encoding.createEncoder()
 			encoding.writeVarUint(encoder, MSG_SYNC)
-			const syncMsgType = syncProtocol.readSyncMessage(decoder, encoder, this.doc, this)
-			console.log('[YjsProvider] sync message type:', syncMsgType, 'ytext length after:', this.doc.getText('content').length)
+			syncProtocol.readSyncMessage(decoder, encoder, this.doc, this)
 			if (encoding.length(encoder) > 1) {
-				console.log('[YjsProvider] sending sync response')
 				this.send(encoding.toUint8Array(encoder))
 			}
 		} else if (msgType === MSG_AWARENESS) {
@@ -72,11 +70,8 @@ export class YjsProvider {
 	}
 
 	private send(data: Uint8Array) {
-		console.log('[YjsProvider] send, readyState:', this.ws.readyState, 'size:', data.byteLength)
 		if (this.ws.readyState === 1) {
 			this.ws.send(data)
-		} else {
-			console.log('[YjsProvider] SKIPPED send — ws not open')
 		}
 	}
 

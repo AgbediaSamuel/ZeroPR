@@ -57,6 +57,14 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "zeropr.undo",
+        "title": "ZeroPR: Undo"
+      },
+      {
+        "command": "zeropr.redo",
+        "title": "ZeroPR: Redo"
+      },
+      {
         "command": "zeropr.refreshSessions",
         "title": "Refresh Sessions",
         "icon": "$(refresh)"
@@ -128,7 +136,21 @@
           "name": "Sessions"
         }
       ]
-    }
+    },
+    "keybindings": [
+      {
+        "command": "zeropr.undo",
+        "key": "ctrl+z",
+        "mac": "cmd+z",
+        "when": "resourceScheme == zeropr"
+      },
+      {
+        "command": "zeropr.redo",
+        "key": "ctrl+y",
+        "mac": "cmd+shift+z",
+        "when": "resourceScheme == zeropr"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "pnpm run package",
