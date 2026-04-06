@@ -6,10 +6,6 @@ import (
 	"slices"
 )
 
-// TODO: refactor lock and unlocks to use wrapper function instead
-// add a new method that can edit sessions directly in the map
-// instead of using sessionregister.Lock() and Unlock()
-
 type Peer struct {
 	Name string
 	Host string
@@ -18,11 +14,9 @@ type Peer struct {
 
 type Registry struct {
 	peers map[string]Peer
-	Key sync.RWMutex
-
+	Key   sync.RWMutex
 }
 
-// constructor
 func NewRegister() *Registry {
 	return &Registry{
 		peers: make(map[string]Peer),
@@ -36,9 +30,7 @@ func (r *Registry) exists(host string) bool {
 
 func (r *Registry) Add(peer *Peer) {
 	r.Key.Lock()
-	if !r.exists(peer.Host) {
-		r.peers[peer.Host] = *peer
-	}
+	r.peers[peer.Host] = *peer
 	r.Key.Unlock()
 }
 
@@ -48,7 +40,6 @@ func (r *Registry) Remove(host string) {
 		delete(r.peers, host)
 	}
 	r.Key.Unlock()
-	
 }
 
 func (r *Registry) Get(host string) Peer {

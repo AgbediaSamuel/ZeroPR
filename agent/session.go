@@ -8,9 +8,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TODO: figure out a way to isolate what websocket connection gets sent
-// to a user
-
 type Session struct {
 	ID string `json:"id"`
 	Host string `json:"host"`

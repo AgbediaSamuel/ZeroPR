@@ -4,4 +4,5 @@ node_modules
 out/
 **/vsc-extension-quickstart.md
 .pnpm-store/
-test*
+docs/
+dist/

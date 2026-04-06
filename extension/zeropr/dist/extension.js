@@ -34,7 +34,7 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var vscode5 = __toESM(require("vscode"));
+var vscode6 = __toESM(require("vscode"));
 
 // node_modules/.pnpm/lib0@0.2.117/node_modules/lib0/map.js
 var create = () => /* @__PURE__ */ new Map();
@@ -8100,20 +8100,9 @@ glo[importIdentifier] = true;
 var os = __toESM(require("os"));
 var HTTP_URL = "http://localhost:9080";
 var host = os.hostname();
-async function apiCall(URL, method, request) {
-  let response;
-  if (request) {
-    response = await fetch(URL, {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-      },
-      body: JSON.stringify(request)
-    });
-  } else {
-    response = await fetch(URL);
-  }
+async function apiCall(url, method, body) {
+  const options = body ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
+  const response = await fetch(url, options);
   return await response.json();
 }
 async function getPeers() {
@@ -8134,15 +8123,10 @@ function wsconn(targetHost, params2) {
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     ws.onopen = () => {
-      const token = {
-        id: params2.id,
-        role: params2.role,
-        host
-      };
-      ws.send(JSON.stringify(token));
+      ws.send(JSON.stringify({ id: params2.id, role: params2.role, host }));
       resolve(ws);
     };
-    ws.onerror = (err) => reject(new Error(`WebSocket connection failed to ${targetHost}`));
+    ws.onerror = () => reject(new Error(`WebSocket connection failed to ${targetHost}`));
     ws.onclose = () => {
     };
   });
@@ -8167,8 +8151,7 @@ async function joinSession(session) {
     role: "Guest",
     id: session.id
   };
-  const ws = await wsconn(session.relayHost, request);
-  return ws;
+  return await wsconn(session.relayHost, request);
 }
 async function endSession(sessionID) {
   const request = {
@@ -8195,6 +8178,7 @@ async function invitePeer(peer, filepath) {
 var vscode = __toESM(require("vscode"));
 var import_vscode = require("vscode");
 var Peers = class {
+  lastData = "";
   getTreeItem(element) {
     const peer = new import_vscode.TreeItem(element.Name);
     peer.description = element.Host;
@@ -8210,12 +8194,24 @@ var Peers = class {
   update() {
     this.changeEvent.fire(void 0);
   }
+  async poll() {
+    try {
+      const peers = await getPeers();
+      const data = JSON.stringify(peers);
+      if (data !== this.lastData) {
+        this.lastData = data;
+        this.changeEvent.fire(void 0);
+      }
+    } catch {
+    }
+  }
 };
 
 // src/sessionsTree.ts
 var vscode2 = __toESM(require("vscode"));
 var import_vscode2 = require("vscode");
 var Sessions = class {
+  lastData = "";
   getTreeItem(element) {
     const other = element.host === host ? element.guest : element.host;
     const label = other ? `Session with ${other}` : "Waiting for guest...";
@@ -8233,6 +8229,17 @@ var Sessions = class {
   onDidChangeTreeData = this.changeEvent.event;
   update() {
     this.changeEvent.fire(void 0);
+  }
+  async poll() {
+    try {
+      const sessions = await getSessions();
+      const data = JSON.stringify(sessions);
+      if (data !== this.lastData) {
+        this.lastData = data;
+        this.changeEvent.fire(void 0);
+      }
+    } catch {
+    }
   }
 };
 
@@ -8596,9 +8603,8 @@ var YjsBinding = class {
       }
     });
   }
-  // Eclipse OCT approach: replay incoming VS Code changes against stored
-  // {before, after} snapshots. If the replay matches a known remote change,
-  // it's an echo — skip it. This is deterministic and timing-independent.
+  // Replay VS Code changes against stored {before, after} snapshots.
+  // If the replay matches a known remote change, it is an echo — skip it.
   shouldApply(contentChanges) {
     const changes = [...contentChanges].sort((a, b) => a.rangeOffset - b.rangeOffset);
     let newText = this.text;
@@ -8619,7 +8625,6 @@ var YjsBinding = class {
         replayDrift += change.text.length - change.rangeLength;
       }
       if (replayText === changeSet.after) {
-        this.text = newText;
         return false;
       }
     }
@@ -8682,11 +8687,8 @@ var YjsBinding = class {
     if (index !== -1) {
       this.changeSets.splice(index, 1);
     }
-    const ytextContent = this.ytext.toString();
-    const docContent = this.document.getText();
-    if (ytextContent !== docContent) {
-      console.warn("[YjsBinding] DRIFT DETECTED \u2014 resyncing");
-      console.warn("[YjsBinding] Y.Text length:", ytextContent.length, "doc length:", docContent.length);
+    if (this.ytext.toString() !== this.document.getText()) {
+      console.warn("[YjsBinding] drift detected, resyncing");
       await this.resync();
     }
   }
@@ -8773,91 +8775,183 @@ var ZeroPRFileSystem = class {
   }
 };
 
+// src/cursorPresence.ts
+var vscode5 = __toESM(require("vscode"));
+var COLORS = [
+  { cursor: "#FF6B6B", selection: "rgba(255,107,107,0.3)" },
+  { cursor: "#4ECDC4", selection: "rgba(78,205,196,0.3)" },
+  { cursor: "#FFE66D", selection: "rgba(255,230,109,0.3)" },
+  { cursor: "#A855F7", selection: "rgba(168,85,247,0.3)" },
+  { cursor: "#F97316", selection: "rgba(249,115,22,0.3)" }
+];
+var CursorPresence = class {
+  awareness;
+  document;
+  cursorDecoration;
+  selectionDecoration;
+  cursorDisposable;
+  awarenessHandler;
+  constructor(awareness, document2, localName) {
+    this.awareness = awareness;
+    this.document = document2;
+    const color = COLORS[(awareness.clientID + 1) % COLORS.length];
+    this.cursorDecoration = vscode5.window.createTextEditorDecorationType({
+      borderStyle: "solid",
+      borderWidth: "0 2px 0 0",
+      borderColor: color.cursor
+    });
+    this.selectionDecoration = vscode5.window.createTextEditorDecorationType({
+      backgroundColor: color.selection
+    });
+    awareness.setLocalStateField("user", { name: localName });
+    this.cursorDisposable = vscode5.window.onDidChangeTextEditorSelection((event) => {
+      if (event.textEditor.document !== this.document) {
+        return;
+      }
+      const sel = event.selections[0];
+      awareness.setLocalStateField("cursor", {
+        anchor: this.document.offsetAt(sel.anchor),
+        head: this.document.offsetAt(sel.active)
+      });
+    });
+    this.awarenessHandler = () => this.renderRemoteCursors();
+    awareness.on("change", this.awarenessHandler);
+  }
+  renderRemoteCursors() {
+    const editor = vscode5.window.visibleTextEditors.find((e) => e.document === this.document);
+    if (!editor) {
+      return;
+    }
+    const cursors = [];
+    const selections = [];
+    const states = this.awareness.getStates();
+    for (const [clientID, state] of states.entries()) {
+      if (clientID === this.awareness.doc.clientID) {
+        continue;
+      }
+      const cursor = state.cursor;
+      if (!cursor) {
+        continue;
+      }
+      const anchor = this.document.positionAt(cursor.anchor);
+      const head = this.document.positionAt(cursor.head);
+      if (cursor.anchor === cursor.head) {
+        cursors.push({ range: new vscode5.Range(head, head) });
+      } else {
+        const start = anchor.isBefore(head) ? anchor : head;
+        const end = anchor.isBefore(head) ? head : anchor;
+        selections.push({ range: new vscode5.Range(start, end) });
+        cursors.push({ range: new vscode5.Range(head, head) });
+      }
+    }
+    editor.setDecorations(this.cursorDecoration, cursors);
+    editor.setDecorations(this.selectionDecoration, selections);
+  }
+  destroy() {
+    this.cursorDisposable.dispose();
+    this.awareness.off("change", this.awarenessHandler);
+    this.cursorDecoration.dispose();
+    this.selectionDecoration.dispose();
+  }
+};
+
 // src/extension.ts
-var activeWs = null;
-var activeDocument = null;
-var activeDoc = null;
-var activeProvider = null;
-var activeBinding = null;
-var activeSessionId = null;
-var activeSandboxFilename = null;
-var originalFilePath = null;
+var activeSession = null;
 var isEndingSession = false;
 var zeroprFs;
-function setupYjs(ws, document2, isHost) {
-  const ydoc = new Doc();
-  const ytext = ydoc.getText("content");
-  if (isHost) {
+var statusBar;
+function updateStatusBar() {
+  if (!activeSession) {
+    statusBar.text = "$(circle-slash) ZeroPR";
+    statusBar.tooltip = "No active session";
+  } else {
+    const fileCount = activeSession.files.size;
+    const role = activeSession.isHost ? "Host" : "Guest";
+    statusBar.text = `$(broadcast) ZeroPR: ${role} (${fileCount} file${fileCount !== 1 ? "s" : ""})`;
+    statusBar.tooltip = `Session ${activeSession.id.slice(0, 8)} \u2014 ${role}`;
+  }
+  statusBar.show();
+}
+function addFileToSession(session, document2, isHost, sandboxFilename, originalFilePath) {
+  const ytextKey = `file:${sandboxFilename}`;
+  const ytext = session.doc.getText(ytextKey);
+  if (isHost && document2.getText().length > 0) {
     ytext.insert(0, document2.getText());
   }
-  activeDoc = ydoc;
-  activeProvider = new YjsProvider(ydoc, ws);
-  activeBinding = new YjsBinding(ytext, ydoc, document2);
+  const binding = new YjsBinding(ytext, session.doc, document2);
+  const cursors = new CursorPresence(session.provider.awareness, document2, host);
+  const file = { binding, cursors, document: document2, sandboxFilename, originalFilePath, ytextKey };
+  session.files.set(sandboxFilename, file);
+  return file;
 }
-function cleanupYjs() {
-  activeBinding?.destroy();
-  activeProvider?.destroy();
-  activeDoc?.destroy();
-  activeBinding = null;
-  activeProvider = null;
-  activeDoc = null;
+function cleanupFile(file) {
+  file.cursors.destroy();
+  file.binding.destroy();
 }
 async function cleanupSession() {
-  cleanupYjs();
-  if (activeWs) {
-    activeWs.close();
-    activeWs = null;
-  }
-  const tabs = vscode5.window.tabGroups.all.flatMap((g) => g.tabs);
-  for (const tab of tabs) {
-    if (tab.input instanceof vscode5.TabInputText && tab.input.uri.scheme === "zeropr") {
-      await vscode5.window.tabGroups.close(tab);
+  if (activeSession) {
+    for (const file of activeSession.files.values()) {
+      cleanupFile(file);
+    }
+    activeSession.provider.destroy();
+    activeSession.doc.destroy();
+    activeSession.ws.close();
+    const tabs = vscode6.window.tabGroups.all.flatMap((g) => g.tabs);
+    for (const tab of tabs) {
+      if (tab.input instanceof vscode6.TabInputText && tab.input.uri.scheme === "zeropr") {
+        await vscode6.window.tabGroups.close(tab);
+      }
+    }
+    for (const file of activeSession.files.values()) {
+      const uri = vscode6.Uri.parse(`zeropr://session-${activeSession.id}/${file.sandboxFilename}`);
+      try {
+        zeroprFs.delete(uri);
+      } catch {
+      }
     }
   }
-  if (activeSessionId && activeSandboxFilename) {
-    const uri = vscode5.Uri.parse(`zeropr://session-${activeSessionId}/${activeSandboxFilename}`);
-    try {
-      zeroprFs.delete(uri);
-    } catch {
-    }
-  }
-  activeDocument = null;
-  activeSessionId = null;
-  activeSandboxFilename = null;
-  originalFilePath = null;
+  activeSession = null;
   isEndingSession = false;
+  updateStatusBar();
 }
 async function openSandbox(sessionId, filename, content) {
-  const uri = vscode5.Uri.parse(`zeropr://session-${sessionId}/${filename}`);
+  const uri = vscode6.Uri.parse(`zeropr://session-${sessionId}/${filename}`);
   const encoder = new TextEncoder();
   zeroprFs.writeFile(uri, encoder.encode(content));
-  const doc = await vscode5.workspace.openTextDocument(uri);
-  await vscode5.window.showTextDocument(doc, { preview: false });
+  const doc = await vscode6.workspace.openTextDocument(uri);
+  await vscode6.window.showTextDocument(doc, { preview: false });
   return doc;
 }
-function setupWsOnClose(ws, sessionsView, isHost) {
+function setupWsOnClose(ws, sessionsView) {
   ws.onclose = async () => {
     if (isEndingSession) {
       return;
     }
-    if (isHost && activeDoc && activeSessionId) {
-      vscode5.window.showInformationMessage("Guest left the session");
-      const request = { host, role: "Host", id: activeSessionId };
+    if (!activeSession) {
+      return;
+    }
+    if (activeSession.isHost) {
+      vscode6.window.showInformationMessage("Guest left the session");
+      const sessionId = activeSession.id;
+      const request = { host, role: "Host", id: sessionId };
       wsconn("localhost", request).then((newWs) => {
-        activeProvider?.destroy();
-        if (activeDoc) {
-          activeProvider = new YjsProvider(activeDoc, newWs);
+        if (!activeSession) {
+          return;
         }
-        activeWs = newWs;
-        setupWsOnClose(newWs, sessionsView, true);
+        activeSession.provider.destroy();
+        activeSession.provider = new YjsProvider(activeSession.doc, newWs);
+        for (const file of activeSession.files.values()) {
+          file.cursors.destroy();
+          file.cursors = new CursorPresence(activeSession.provider.awareness, file.document, host);
+        }
+        activeSession.ws = newWs;
+        setupWsOnClose(newWs, sessionsView);
       });
     } else {
-      vscode5.window.showInformationMessage("Session ended");
-      const sessionId = activeSessionId;
+      vscode6.window.showInformationMessage("Session ended");
+      const sessionId = activeSession.id;
       await cleanupSession();
-      if (sessionId) {
-        await endSession(sessionId);
-      }
+      await endSession(sessionId);
       sessionsView.update();
     }
   };
@@ -8865,84 +8959,115 @@ function setupWsOnClose(ws, sessionsView, isHost) {
 function activate(context) {
   zeroprFs = new ZeroPRFileSystem();
   context.subscriptions.push(
-    vscode5.workspace.registerFileSystemProvider("zeropr", zeroprFs, { isCaseSensitive: true })
+    vscode6.workspace.registerFileSystemProvider("zeropr", zeroprFs, { isCaseSensitive: true })
   );
+  statusBar = vscode6.window.createStatusBarItem(vscode6.StatusBarAlignment.Left, 100);
+  context.subscriptions.push(statusBar);
+  updateStatusBar();
   const peersView = new Peers();
   const sessionsView = new Sessions();
-  vscode5.window.registerTreeDataProvider("zeropr.getPeers", peersView);
-  vscode5.window.registerTreeDataProvider("zeropr.sessions", sessionsView);
+  vscode6.window.registerTreeDataProvider("zeropr.getPeers", peersView);
+  vscode6.window.registerTreeDataProvider("zeropr.sessions", sessionsView);
   const pollInterval = setInterval(() => {
-    peersView.update();
-    sessionsView.update();
+    peersView.poll();
+    sessionsView.poll();
   }, 3e3);
   context.subscriptions.push({ dispose: () => clearInterval(pollInterval) });
   context.subscriptions.push(
-    vscode5.commands.registerCommand("zeropr.startBroadcast", () => {
-      startBroadcast();
+    vscode6.commands.registerCommand("zeropr.startBroadcast", async () => {
+      try {
+        await startBroadcast();
+        peersView.update();
+      } catch {
+        vscode6.window.showErrorMessage("Failed to start broadcast \u2014 is the ZeroPR agent running?");
+      }
+    }),
+    vscode6.commands.registerCommand("zeropr.stopBroadcast", async () => {
+      try {
+        await stopBroadcast();
+        peersView.update();
+      } catch {
+        vscode6.window.showErrorMessage("Failed to stop broadcast \u2014 is the ZeroPR agent running?");
+      }
+    }),
+    vscode6.commands.registerCommand("zeropr.refreshPeers", () => {
       peersView.update();
     }),
-    vscode5.commands.registerCommand("zeropr.stopBroadcast", () => {
-      stopBroadcast();
-      peersView.update();
-    }),
-    vscode5.commands.registerCommand("zeropr.refreshPeers", () => {
-      peersView.update();
-    }),
-    vscode5.commands.registerCommand("zeropr.refreshSessions", () => {
+    vscode6.commands.registerCommand("zeropr.refreshSessions", () => {
       sessionsView.update();
     }),
-    vscode5.commands.registerCommand("zeropr.invitePeer", async (peer) => {
-      const editor = vscode5.window.activeTextEditor;
+    vscode6.commands.registerCommand("zeropr.invitePeer", async (peer) => {
+      const editor = vscode6.window.activeTextEditor;
       if (!editor) {
-        vscode5.window.showWarningMessage("Open a file to start a session");
+        vscode6.window.showWarningMessage("Open a file to start a session");
         return;
       }
       const fileContent = editor.document.getText();
       const filePath = editor.document.uri.fsPath;
       const filename = `[ZeroPR] ${filePath.split("/").pop() || "untitled"}`;
-      const { session, ws } = await invitePeer(peer, filePath);
-      activeSessionId = session.id;
-      activeSandboxFilename = filename;
-      originalFilePath = filePath;
-      const doc = await openSandbox(session.id, filename, fileContent);
-      activeDocument = doc;
-      setupYjs(ws, doc, true);
-      activeWs = ws;
-      setupWsOnClose(ws, sessionsView, true);
-      sessionsView.update();
-      vscode5.window.showInformationMessage(`Invited ${peer.Name} to session`);
+      try {
+        const { session, ws } = await invitePeer(peer, filePath);
+        const ydoc = new Doc();
+        const provider = new YjsProvider(ydoc, ws);
+        activeSession = {
+          id: session.id,
+          ws,
+          doc: ydoc,
+          provider,
+          files: /* @__PURE__ */ new Map(),
+          isHost: true
+        };
+        const doc = await openSandbox(session.id, filename, fileContent);
+        addFileToSession(activeSession, doc, true, filename, filePath);
+        setupWsOnClose(ws, sessionsView);
+        sessionsView.update();
+        updateStatusBar();
+        vscode6.window.showInformationMessage(`Invited ${peer.Name} to session`);
+      } catch {
+        vscode6.window.showErrorMessage("Failed to invite peer \u2014 is the ZeroPR agent running?");
+      }
     }),
-    vscode5.commands.registerCommand("zeropr.createSession", async () => {
-      const editor = vscode5.window.activeTextEditor;
+    vscode6.commands.registerCommand("zeropr.createSession", async () => {
+      const editor = vscode6.window.activeTextEditor;
       if (!editor) {
-        vscode5.window.showWarningMessage("Open a file to start a session");
+        vscode6.window.showWarningMessage("Open a file to start a session");
         return;
       }
       const fileContent = editor.document.getText();
       const filePath = editor.document.uri.fsPath;
       const filename = `[ZeroPR] ${filePath.split("/").pop() || "untitled"}`;
-      const { session, ws } = await createSession(filePath);
-      activeSessionId = session.id;
-      activeSandboxFilename = filename;
-      originalFilePath = filePath;
-      const doc = await openSandbox(session.id, filename, fileContent);
-      activeDocument = doc;
-      setupYjs(ws, doc, true);
-      activeWs = ws;
-      setupWsOnClose(ws, sessionsView, true);
-      sessionsView.update();
-      vscode5.window.showInformationMessage(`Session created: ${session.id.slice(0, 8)}`);
+      try {
+        const { session, ws } = await createSession(filePath);
+        const ydoc = new Doc();
+        const provider = new YjsProvider(ydoc, ws);
+        activeSession = {
+          id: session.id,
+          ws,
+          doc: ydoc,
+          provider,
+          files: /* @__PURE__ */ new Map(),
+          isHost: true
+        };
+        const doc = await openSandbox(session.id, filename, fileContent);
+        addFileToSession(activeSession, doc, true, filename, filePath);
+        setupWsOnClose(ws, sessionsView);
+        sessionsView.update();
+        updateStatusBar();
+        vscode6.window.showInformationMessage(`Session created: ${session.id.slice(0, 8)}`);
+      } catch {
+        vscode6.window.showErrorMessage("Failed to create session \u2014 is the ZeroPR agent running?");
+      }
     }),
-    vscode5.commands.registerCommand("zeropr.joinSession", async (sessionItem) => {
+    vscode6.commands.registerCommand("zeropr.joinSession", async (sessionItem) => {
       let session = sessionItem;
       if (!session) {
         const sessions = await getSessions();
         const pending = sessions.filter((s) => s.host !== host);
         if (pending.length === 0) {
-          vscode5.window.showInformationMessage("No sessions to join");
+          vscode6.window.showInformationMessage("No sessions to join");
           return;
         }
-        const pick = await vscode5.window.showQuickPick(
+        const pick = await vscode6.window.showQuickPick(
           pending.map((s) => ({ label: `Session with ${s.host}`, detail: s.id, session: s })),
           { placeHolder: "Select a session to join" }
         );
@@ -8952,59 +9077,135 @@ function activate(context) {
         session = pick.session;
       }
       const filename = `[ZeroPR] ${session.filepath.split("/").pop() || "untitled"}`;
-      activeSessionId = session.id;
-      activeSandboxFilename = filename;
-      const ws = await joinSession(session);
+      let ws;
+      try {
+        ws = await joinSession(session);
+      } catch {
+        vscode6.window.showErrorMessage("Failed to join session \u2014 is the host's agent reachable?");
+        return;
+      }
+      const ydoc = new Doc();
+      const provider = new YjsProvider(ydoc, ws);
+      activeSession = {
+        id: session.id,
+        ws,
+        doc: ydoc,
+        provider,
+        files: /* @__PURE__ */ new Map(),
+        isHost: false
+      };
       const doc = await openSandbox(session.id, filename, "");
-      activeDocument = doc;
-      setupYjs(ws, doc, false);
-      activeWs = ws;
-      setupWsOnClose(ws, sessionsView, false);
+      addFileToSession(activeSession, doc, false, filename, null);
+      const existingKeys = new Set(Array.from(ydoc.share.keys()));
+      const fileCheckInterval = setInterval(() => {
+        if (!activeSession || activeSession.doc !== ydoc) {
+          clearInterval(fileCheckInterval);
+          return;
+        }
+        for (const [key] of ydoc.share) {
+          if (key.startsWith("file:") && !existingKeys.has(key)) {
+            existingKeys.add(key);
+            const fname = key.replace("file:", "");
+            openSandbox(activeSession.id, fname, "").then((newDoc) => {
+              if (activeSession) {
+                addFileToSession(activeSession, newDoc, false, fname, null);
+              }
+            });
+          }
+        }
+      }, 500);
+      context.subscriptions.push({ dispose: () => clearInterval(fileCheckInterval) });
+      setupWsOnClose(ws, sessionsView);
       sessionsView.update();
-      vscode5.window.showInformationMessage(`Joined session with ${session.host}`);
+      updateStatusBar();
+      vscode6.window.showInformationMessage(`Joined session with ${session.host}`);
     }),
-    vscode5.commands.registerCommand("zeropr.endSession", async (sessionItem) => {
-      if (activeDoc && originalFilePath) {
-        const ytext = activeDoc.getText("content");
-        const answer = await vscode5.window.showInformationMessage(
-          `Save changes to ${originalFilePath.split("/").pop()}?`,
-          "Save",
-          "Discard"
-        );
-        if (answer === "Save") {
-          const uri = vscode5.Uri.file(originalFilePath);
-          const encoder = new TextEncoder();
-          await vscode5.workspace.fs.writeFile(uri, encoder.encode(ytext.toString()));
+    vscode6.commands.registerCommand("zeropr.endSession", async (sessionItem) => {
+      if (activeSession) {
+        for (const file of activeSession.files.values()) {
+          if (file.originalFilePath) {
+            const ytext = activeSession.doc.getText(file.ytextKey);
+            const answer = await vscode6.window.showInformationMessage(
+              `Save changes to ${file.originalFilePath.split("/").pop()}?`,
+              "Save",
+              "Discard"
+            );
+            if (answer === "Save") {
+              const uri = vscode6.Uri.file(file.originalFilePath);
+              const encoder = new TextEncoder();
+              await vscode6.workspace.fs.writeFile(uri, encoder.encode(ytext.toString()));
+            }
+          }
         }
       }
       isEndingSession = true;
-      if (sessionItem) {
-        await endSession(sessionItem.id);
-      } else if (activeSessionId) {
-        await endSession(activeSessionId);
+      const sessionId = sessionItem?.id || activeSession?.id;
+      if (sessionId) {
+        await endSession(sessionId);
       }
-      cleanupSession();
+      await cleanupSession();
       sessionsView.update();
     }),
-    vscode5.commands.registerCommand("zeropr.leaveSession", async (sessionItem) => {
+    vscode6.commands.registerCommand("zeropr.leaveSession", async (sessionItem) => {
       isEndingSession = true;
-      if (sessionItem) {
-        await endSession(sessionItem.id);
+      const sessionId = sessionItem?.id || activeSession?.id;
+      if (sessionId) {
+        await endSession(sessionId);
       }
-      cleanupSession();
+      await cleanupSession();
       sessionsView.update();
     }),
-    vscode5.commands.registerCommand("zeropr.undo", () => {
-      activeBinding?.undoManager.undo();
+    vscode6.commands.registerCommand("zeropr.addFile", async () => {
+      if (!activeSession) {
+        vscode6.window.showWarningMessage("No active session \u2014 create or join one first");
+        return;
+      }
+      if (!activeSession.isHost) {
+        vscode6.window.showWarningMessage("Only the host can add files to the session");
+        return;
+      }
+      const editor = vscode6.window.activeTextEditor;
+      if (!editor) {
+        vscode6.window.showWarningMessage("Open a file to add to the session");
+        return;
+      }
+      const filePath = editor.document.uri.fsPath;
+      const filename = `[ZeroPR] ${filePath.split("/").pop() || "untitled"}`;
+      if (activeSession.files.has(filename)) {
+        vscode6.window.showWarningMessage("This file is already in the session");
+        return;
+      }
+      const fileContent = editor.document.getText();
+      const doc = await openSandbox(activeSession.id, filename, fileContent);
+      addFileToSession(activeSession, doc, true, filename, filePath);
+      updateStatusBar();
+      vscode6.window.showInformationMessage(`Added ${filePath.split("/").pop()} to session`);
     }),
-    vscode5.commands.registerCommand("zeropr.redo", () => {
-      activeBinding?.undoManager.redo();
+    vscode6.commands.registerCommand("zeropr.undo", () => {
+      const editor = vscode6.window.activeTextEditor;
+      if (!editor || !activeSession) {
+        return;
+      }
+      for (const file of activeSession.files.values()) {
+        if (file.document === editor.document) {
+          file.binding.undoManager.undo();
+          return;
+        }
+      }
     }),
-    vscode5.commands.registerCommand("zeropr.helloWorld", () => {
-      vscode5.window.showInformationMessage("Hello World from zeropr!");
+    vscode6.commands.registerCommand("zeropr.redo", () => {
+      const editor = vscode6.window.activeTextEditor;
+      if (!editor || !activeSession) {
+        return;
+      }
+      for (const file of activeSession.files.values()) {
+        if (file.document === editor.document) {
+          file.binding.undoManager.redo();
+          return;
+        }
+      }
     })
   );
-  console.log("ZeroPR extension is now active!");
 }
 function deactivate() {
   isEndingSession = true;

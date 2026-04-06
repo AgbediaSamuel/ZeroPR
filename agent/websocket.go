@@ -15,7 +15,6 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-
 func wsServer(w http.ResponseWriter, req *http.Request) {
 	var ur UserRequest
 	conn, err := upgrader.Upgrade(w, req, nil)
@@ -25,9 +24,6 @@ func wsServer(w http.ResponseWriter, req *http.Request) {
 	rerr := json.Unmarshal(msg, &ur)
 	errorhandler(rerr)
 	current := sessionregister.Get(ur.ID)
-	// add a check here to make sure 
-	// Host and Guest fields match hostnames for clients
-	// sending requests to create websocket connections
 	if ur.Role == "Host" {
 		current.Sender = conn
 	} else {
@@ -35,10 +31,9 @@ func wsServer(w http.ResponseWriter, req *http.Request) {
 		current.Guest = ur.Host
 	}
 	sessionregister.Update(&current)
-	// register a write mutex for this connection
 	connMu.Store(conn, &sync.Mutex{})
 
-	// waiting for both to be satisfied before entering websocket relay loop
+	// wait for both host and guest before starting relay
 	for {
 		current = sessionregister.Get(current.ID)
 		if current.Sender != nil && current.Receiver != nil {
@@ -52,7 +47,6 @@ func wsServer(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			break
 		}
-		// re-read session each time to get fresh connection pointers after reconnects
 		latest := sessionregister.Get(current.ID)
 		var other *websocket.Conn
 		if ur.Role == "Host" {
@@ -63,7 +57,6 @@ func wsServer(w http.ResponseWriter, req *http.Request) {
 		if other == nil {
 			break
 		}
-		// protect against concurrent writes to the same websocket connection
 		mu, ok := connMu.Load(other)
 		if !ok {
 			break
@@ -76,7 +69,6 @@ func wsServer(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	// only clear our connection if it's still ours (not replaced by a reconnect)
 	current = sessionregister.Get(current.ID)
 	if ur.Role == "Host" && current.Sender == conn {
 		current.Sender = nil

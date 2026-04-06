@@ -11,12 +11,10 @@ import (
 )
 
 var (
-	ctx context.Context
+	ctx    context.Context
 	cancel context.CancelFunc
-
 )
 
-// shared register instance for all operations to access
 var register = NewRegister()
 
 func errorhandler(err error) {
@@ -27,11 +25,10 @@ func errorhandler(err error) {
 }
 
 func startDiscovery() {
-
 	setup := dnssd.Config{
-		Name:   "ZeroPR",
-		Type:   "_zeropr._tcp",
-		Port:   9080,
+		Name: "ZeroPR",
+		Type: "_zeropr._tcp",
+		Port: 9080,
 	}
 
 	service, err := dnssd.NewService(setup)
@@ -44,7 +41,6 @@ func startDiscovery() {
 	errorhandler(err)
 
 	ctx, cancel = context.WithCancel(context.Background())
-	//  go routine for broadcasting in background
 	go responder.Respond(ctx)
 	host, _ := os.Hostname()
 	addFn := func(entry dnssd.BrowseEntry) {
@@ -68,15 +64,30 @@ func startDiscovery() {
 	rmFn := func(entry dnssd.BrowseEntry) {
 		for _, ip := range entry.IPs {
 			if ip.To4() != nil {
-				register.Remove(ip.String())
+				peerIP := ip.String()
+				// don't remove peers that are in an active session
+				for _, s := range sessionregister.GetAll() {
+					if s.Host == peerIP || s.Guest == peerIP || s.RelayHost == peerIP {
+						return
+					}
+				}
+				register.Remove(peerIP)
 				return
 			}
 		}
 	}
 
-	serviceName := setup.Type+"."+service.Domain+"."
-
+	serviceName := setup.Type + "." + service.Domain + "."
 	go dnssd.LookupType(ctx, serviceName, addFn, rmFn)
 
-
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(60 * time.Second):
+				go dnssd.LookupType(ctx, serviceName, addFn, rmFn)
+			}
+		}
+	}()
 }

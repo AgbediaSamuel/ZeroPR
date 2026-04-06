@@ -16,10 +16,6 @@
   "contributes": {
     "commands": [
       {
-        "command": "zeropr.helloWorld",
-        "title": "Hello World"
-      },
-      {
         "command": "zeropr.startBroadcast",
         "title": "Start Search" 
       },
@@ -55,6 +51,11 @@
         "command": "zeropr.refreshPeers",
         "title": "Refresh Peers",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "zeropr.addFile",
+        "title": "Add File to Session",
+        "icon": "$(new-file)"
       },
       {
         "command": "zeropr.undo",

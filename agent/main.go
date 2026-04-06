@@ -3,8 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	_ "io"
-	_ "log"
 	"net"
 	"net/http"
 	"time"
@@ -12,13 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// later on, write a function that decodes requests
-// instead of repeating json.NewDecoder everytime
-// ID parameter in UserRequest might be useless (can't remember why I added it anymore lol)
-
-var (
-	started bool
-)
+var started bool
 
 type UserRequest struct {
 	Host string `json:"host"`
@@ -92,7 +84,6 @@ func startSession(w http.ResponseWriter, req *http.Request) {
 	errorhandler(err)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(resp)
-	
 }
 
 func joinSession(w http.ResponseWriter, req *http.Request) {
@@ -167,16 +158,8 @@ func getAllSessions(w http.ResponseWriter, req *http.Request) {
 	w.Write(resp)
 }
 
-
-// func status(w http.ResponseWriter, req *http.Request) {
-// 	if started {
-// 		w.Write([]byte{1})
-// 	}
-// }
-
 func main() {
-	test()
-	fmt.Println("This is the entry point for the Go Agent")
+	fmt.Println("ZeroPR agent starting on :9080")
 	http.HandleFunc("/api", server)
 	http.HandleFunc("/api/peers", readPeers)
 	http.HandleFunc("/api/broadcast/start", startBroadcast)
@@ -187,9 +170,7 @@ func main() {
 	http.HandleFunc("/api/session/leave", leaveSession)
 	http.HandleFunc("/api/session/end", endSession)
 	http.HandleFunc("/api/sessions", getAllSessions)
-	// http.HandleFunc("api/broadcast/status")
 
 	err := http.ListenAndServe(":9080", nil)
 	errorhandler(err)
-
 }

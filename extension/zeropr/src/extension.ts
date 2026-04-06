@@ -1,265 +1,401 @@
-import * as vscode from 'vscode'
-import * as Y from 'yjs'
-import { startBroadcast, stopBroadcast, createSession, joinSession, endSession, invitePeer, getSessions, host, Session, wsconn } from './agentClient'
-import { Peers } from './peersTree'
-import { Sessions } from './sessionsTree'
-import { YjsProvider } from './yjsProvider'
-import { YjsBinding } from './yjsBinding'
-import { ZeroPRFileSystem } from './zeroprFs'
+import * as vscode from 'vscode';
+import * as Y from 'yjs';
+import { startBroadcast, stopBroadcast, createSession, joinSession, endSession, invitePeer, getSessions, host, Session, wsconn } from './agentClient';
+import { Peers } from './peersTree';
+import { Sessions } from './sessionsTree';
+import { YjsProvider } from './yjsProvider';
+import { YjsBinding } from './yjsBinding';
+import { ZeroPRFileSystem } from './zeroprFs';
+import { CursorPresence } from './cursorPresence';
 
-let activeWs: WebSocket | null = null
-let activeDocument: vscode.TextDocument | null = null
-let activeDoc: Y.Doc | null = null
-let activeProvider: YjsProvider | null = null
-let activeBinding: YjsBinding | null = null
-let activeSessionId: string | null = null
-let activeSandboxFilename: string | null = null
-let originalFilePath: string | null = null
-let isEndingSession = false
-let zeroprFs: ZeroPRFileSystem
-
-function setupYjs(ws: WebSocket, document: vscode.TextDocument, isHost: boolean) {
-	const ydoc = new Y.Doc()
-	const ytext = ydoc.getText('content')
-	if (isHost) {
-		ytext.insert(0, document.getText())
-	}
-	activeDoc = ydoc
-	activeProvider = new YjsProvider(ydoc, ws)
-	activeBinding = new YjsBinding(ytext, ydoc, document)
+interface ActiveFile {
+	binding: YjsBinding
+	cursors: CursorPresence
+	document: vscode.TextDocument
+	sandboxFilename: string
+	originalFilePath: string | null
+	ytextKey: string
 }
 
-function cleanupYjs() {
-	activeBinding?.destroy()
-	activeProvider?.destroy()
-	activeDoc?.destroy()
-	activeBinding = null
-	activeProvider = null
-	activeDoc = null
+interface ActiveSession {
+	id: string
+	ws: WebSocket
+	doc: Y.Doc
+	provider: YjsProvider
+	files: Map<string, ActiveFile>
+	isHost: boolean
+}
+
+let activeSession: ActiveSession | null = null;
+let isEndingSession = false;
+let zeroprFs: ZeroPRFileSystem;
+let statusBar: vscode.StatusBarItem;
+
+function updateStatusBar() {
+	if (!activeSession) {
+		statusBar.text = '$(circle-slash) ZeroPR';
+		statusBar.tooltip = 'No active session';
+	} else {
+		const fileCount = activeSession.files.size;
+		const role = activeSession.isHost ? 'Host' : 'Guest';
+		statusBar.text = `$(broadcast) ZeroPR: ${role} (${fileCount} file${fileCount !== 1 ? 's' : ''})`;
+		statusBar.tooltip = `Session ${activeSession.id.slice(0, 8)} — ${role}`;
+	}
+	statusBar.show();
+}
+
+function addFileToSession(session: ActiveSession, document: vscode.TextDocument, isHost: boolean, sandboxFilename: string, originalFilePath: string | null): ActiveFile {
+	const ytextKey = `file:${sandboxFilename}`;
+	const ytext = session.doc.getText(ytextKey);
+	if (isHost && document.getText().length > 0) {
+		ytext.insert(0, document.getText());
+	}
+	const binding = new YjsBinding(ytext, session.doc, document);
+	const cursors = new CursorPresence(session.provider.awareness, document, host);
+
+	const file: ActiveFile = { binding, cursors, document, sandboxFilename, originalFilePath, ytextKey };
+	session.files.set(sandboxFilename, file);
+	return file;
+}
+
+function cleanupFile(file: ActiveFile) {
+	file.cursors.destroy();
+	file.binding.destroy();
 }
 
 async function cleanupSession() {
-	cleanupYjs()
-	if (activeWs) {
-		activeWs.close()
-		activeWs = null
-	}
-	// close the sandbox editor tab
-	const tabs = vscode.window.tabGroups.all.flatMap(g => g.tabs)
-	for (const tab of tabs) {
-		if (tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === 'zeropr') {
-			await vscode.window.tabGroups.close(tab)
+	if (activeSession) {
+		for (const file of activeSession.files.values()) {
+			cleanupFile(file);
+		}
+		activeSession.provider.destroy();
+		activeSession.doc.destroy();
+		activeSession.ws.close();
+
+		const tabs = vscode.window.tabGroups.all.flatMap(g => g.tabs);
+		for (const tab of tabs) {
+			if (tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === 'zeropr') {
+				await vscode.window.tabGroups.close(tab);
+			}
+		}
+
+		for (const file of activeSession.files.values()) {
+			const uri = vscode.Uri.parse(`zeropr://session-${activeSession.id}/${file.sandboxFilename}`);
+			try { zeroprFs.delete(uri); } catch {}
 		}
 	}
-	if (activeSessionId && activeSandboxFilename) {
-		const uri = vscode.Uri.parse(`zeropr://session-${activeSessionId}/${activeSandboxFilename}`)
-		try { zeroprFs.delete(uri) } catch {}
-	}
-	activeDocument = null
-	activeSessionId = null
-	activeSandboxFilename = null
-	originalFilePath = null
-	isEndingSession = false
+	activeSession = null;
+	isEndingSession = false;
+	updateStatusBar();
 }
 
 async function openSandbox(sessionId: string, filename: string, content: string): Promise<vscode.TextDocument> {
-	const uri = vscode.Uri.parse(`zeropr://session-${sessionId}/${filename}`)
-	const encoder = new TextEncoder()
-	zeroprFs.writeFile(uri, encoder.encode(content))
-	const doc = await vscode.workspace.openTextDocument(uri)
-	await vscode.window.showTextDocument(doc, { preview: false })
-	return doc
+	const uri = vscode.Uri.parse(`zeropr://session-${sessionId}/${filename}`);
+	const encoder = new TextEncoder();
+	zeroprFs.writeFile(uri, encoder.encode(content));
+	const doc = await vscode.workspace.openTextDocument(uri);
+	await vscode.window.showTextDocument(doc, { preview: false });
+	return doc;
 }
 
-function setupWsOnClose(ws: WebSocket, sessionsView: Sessions, isHost: boolean) {
+function setupWsOnClose(ws: WebSocket, sessionsView: Sessions) {
 	ws.onclose = async () => {
-		if (isEndingSession) { return }
+		if (isEndingSession) { return; }
+		if (!activeSession) { return; }
 
-		if (isHost && activeDoc && activeSessionId) {
-			vscode.window.showInformationMessage('Guest left the session')
-			const request = { host: host, role: "Host", id: activeSessionId }
+		if (activeSession.isHost) {
+			vscode.window.showInformationMessage('Guest left the session');
+			const sessionId = activeSession.id;
+			const request = { host: host, role: "Host", id: sessionId };
 			wsconn("localhost", request).then(newWs => {
-				activeProvider?.destroy()
-				if (activeDoc) {
-					activeProvider = new YjsProvider(activeDoc, newWs)
+				if (!activeSession) { return; }
+				activeSession.provider.destroy();
+				activeSession.provider = new YjsProvider(activeSession.doc, newWs);
+				for (const file of activeSession.files.values()) {
+					file.cursors.destroy();
+					file.cursors = new CursorPresence(activeSession.provider.awareness, file.document, host);
 				}
-				activeWs = newWs
-				setupWsOnClose(newWs, sessionsView, true)
-			})
+				activeSession.ws = newWs;
+				setupWsOnClose(newWs, sessionsView);
+			});
 		} else {
-			vscode.window.showInformationMessage('Session ended')
-			const sessionId = activeSessionId
-			await cleanupSession()
-			if (sessionId) {
-				await endSession(sessionId)
-			}
-			sessionsView.update()
+			vscode.window.showInformationMessage('Session ended');
+			const sessionId = activeSession.id;
+			await cleanupSession();
+			await endSession(sessionId);
+			sessionsView.update();
 		}
-	}
+	};
 }
 
 export function activate(context: vscode.ExtensionContext) {
-	zeroprFs = new ZeroPRFileSystem()
+	zeroprFs = new ZeroPRFileSystem();
 	context.subscriptions.push(
 		vscode.workspace.registerFileSystemProvider('zeropr', zeroprFs, { isCaseSensitive: true })
-	)
+	);
 
-	const peersView = new Peers()
-	const sessionsView = new Sessions()
-	vscode.window.registerTreeDataProvider("zeropr.getPeers", peersView)
-	vscode.window.registerTreeDataProvider("zeropr.sessions", sessionsView)
+	statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+	context.subscriptions.push(statusBar);
+	updateStatusBar();
+
+	const peersView = new Peers();
+	const sessionsView = new Sessions();
+	vscode.window.registerTreeDataProvider("zeropr.getPeers", peersView);
+	vscode.window.registerTreeDataProvider("zeropr.sessions", sessionsView);
 
 	const pollInterval = setInterval(() => {
-		peersView.update()
-		sessionsView.update()
-	}, 3000)
-	context.subscriptions.push({ dispose: () => clearInterval(pollInterval) })
+		peersView.poll();
+		sessionsView.poll();
+	}, 3000);
+	context.subscriptions.push({ dispose: () => clearInterval(pollInterval) });
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand("zeropr.startBroadcast", () => {
-			startBroadcast()
-			peersView.update()
+		vscode.commands.registerCommand("zeropr.startBroadcast", async () => {
+			try {
+				await startBroadcast();
+				peersView.update();
+			} catch {
+				vscode.window.showErrorMessage("Failed to start broadcast — is the ZeroPR agent running?");
+			}
 		}),
 
-		vscode.commands.registerCommand("zeropr.stopBroadcast", () => {
-			stopBroadcast()
-			peersView.update()
+		vscode.commands.registerCommand("zeropr.stopBroadcast", async () => {
+			try {
+				await stopBroadcast();
+				peersView.update();
+			} catch {
+				vscode.window.showErrorMessage("Failed to stop broadcast — is the ZeroPR agent running?");
+			}
 		}),
 
 		vscode.commands.registerCommand("zeropr.refreshPeers", () => {
-			peersView.update()
+			peersView.update();
 		}),
 
 		vscode.commands.registerCommand("zeropr.refreshSessions", () => {
-			sessionsView.update()
+			sessionsView.update();
 		}),
 
 		vscode.commands.registerCommand("zeropr.invitePeer", async (peer) => {
-			const editor = vscode.window.activeTextEditor
+			const editor = vscode.window.activeTextEditor;
 			if (!editor) {
-				vscode.window.showWarningMessage("Open a file to start a session")
-				return
+				vscode.window.showWarningMessage("Open a file to start a session");
+				return;
 			}
-			const fileContent = editor.document.getText()
-			const filePath = editor.document.uri.fsPath
-			const filename = `[ZeroPR] ${filePath.split('/').pop() || 'untitled'}`
+			const fileContent = editor.document.getText();
+			const filePath = editor.document.uri.fsPath;
+			const filename = `[ZeroPR] ${filePath.split('/').pop() || 'untitled'}`;
 
-			const { session, ws } = await invitePeer(peer, filePath)
-			activeSessionId = session.id
-			activeSandboxFilename = filename
-			originalFilePath = filePath
-			const doc = await openSandbox(session.id, filename, fileContent)
-			activeDocument = doc
-			setupYjs(ws, doc, true)
-			activeWs = ws
-			setupWsOnClose(ws, sessionsView, true)
-			sessionsView.update()
-			vscode.window.showInformationMessage(`Invited ${peer.Name} to session`)
+			try {
+				const { session, ws } = await invitePeer(peer, filePath);
+				const ydoc = new Y.Doc();
+				const provider = new YjsProvider(ydoc, ws);
+
+				activeSession = {
+					id: session.id, ws, doc: ydoc, provider,
+					files: new Map(), isHost: true
+				};
+
+				const doc = await openSandbox(session.id, filename, fileContent);
+				addFileToSession(activeSession, doc, true, filename, filePath);
+
+				setupWsOnClose(ws, sessionsView);
+				sessionsView.update();
+				updateStatusBar();
+				vscode.window.showInformationMessage(`Invited ${peer.Name} to session`);
+			} catch {
+				vscode.window.showErrorMessage("Failed to invite peer — is the ZeroPR agent running?");
+			}
 		}),
 
 		vscode.commands.registerCommand("zeropr.createSession", async () => {
-			const editor = vscode.window.activeTextEditor
+			const editor = vscode.window.activeTextEditor;
 			if (!editor) {
-				vscode.window.showWarningMessage("Open a file to start a session")
-				return
+				vscode.window.showWarningMessage("Open a file to start a session");
+				return;
 			}
-			const fileContent = editor.document.getText()
-			const filePath = editor.document.uri.fsPath
-			const filename = `[ZeroPR] ${filePath.split('/').pop() || 'untitled'}`
+			const fileContent = editor.document.getText();
+			const filePath = editor.document.uri.fsPath;
+			const filename = `[ZeroPR] ${filePath.split('/').pop() || 'untitled'}`;
 
-			const { session, ws } = await createSession(filePath)
-			activeSessionId = session.id
-			activeSandboxFilename = filename
-			originalFilePath = filePath
-			const doc = await openSandbox(session.id, filename, fileContent)
-			activeDocument = doc
-			setupYjs(ws, doc, true)
-			activeWs = ws
-			setupWsOnClose(ws, sessionsView, true)
-			sessionsView.update()
-			vscode.window.showInformationMessage(`Session created: ${session.id.slice(0, 8)}`)
+			try {
+				const { session, ws } = await createSession(filePath);
+				const ydoc = new Y.Doc();
+				const provider = new YjsProvider(ydoc, ws);
+
+				activeSession = {
+					id: session.id, ws, doc: ydoc, provider,
+					files: new Map(), isHost: true
+				};
+
+				const doc = await openSandbox(session.id, filename, fileContent);
+				addFileToSession(activeSession, doc, true, filename, filePath);
+
+				setupWsOnClose(ws, sessionsView);
+				sessionsView.update();
+				updateStatusBar();
+				vscode.window.showInformationMessage(`Session created: ${session.id.slice(0, 8)}`);
+			} catch {
+				vscode.window.showErrorMessage("Failed to create session — is the ZeroPR agent running?");
+			}
 		}),
 
 		vscode.commands.registerCommand("zeropr.joinSession", async (sessionItem?: Session) => {
-			let session = sessionItem
+			let session = sessionItem;
 			if (!session) {
-				const sessions = await getSessions()
-				const pending = sessions.filter(s => s.host !== host)
+				const sessions = await getSessions();
+				const pending = sessions.filter(s => s.host !== host);
 				if (pending.length === 0) {
-					vscode.window.showInformationMessage("No sessions to join")
-					return
+					vscode.window.showInformationMessage("No sessions to join");
+					return;
 				}
 				const pick = await vscode.window.showQuickPick(
 					pending.map(s => ({ label: `Session with ${s.host}`, detail: s.id, session: s })),
 					{ placeHolder: "Select a session to join" }
-				)
-				if (!pick) { return }
-				session = pick.session
+				);
+				if (!pick) { return; }
+				session = pick.session;
 			}
 
-			const filename = `[ZeroPR] ${session.filepath.split('/').pop() || 'untitled'}`
-			activeSessionId = session.id
-			activeSandboxFilename = filename
+			const filename = `[ZeroPR] ${session.filepath.split('/').pop() || 'untitled'}`;
 
-			const ws = await joinSession(session)
-			const doc = await openSandbox(session.id, filename, '')
-			activeDocument = doc
-			setupYjs(ws, doc, false)
-			activeWs = ws
-			setupWsOnClose(ws, sessionsView, false)
-			sessionsView.update()
-			vscode.window.showInformationMessage(`Joined session with ${session.host}`)
+			let ws: WebSocket;
+			try {
+				ws = await joinSession(session);
+			} catch {
+				vscode.window.showErrorMessage("Failed to join session — is the host's agent reachable?");
+				return;
+			}
+			const ydoc = new Y.Doc();
+			const provider = new YjsProvider(ydoc, ws);
+
+			activeSession = {
+				id: session.id, ws, doc: ydoc, provider,
+				files: new Map(), isHost: false
+			};
+
+			const doc = await openSandbox(session.id, filename, '');
+			addFileToSession(activeSession, doc, false, filename, null);
+
+			// poll for new Y.Text keys — when host adds a file, guest auto-opens it
+			const existingKeys = new Set(Array.from(ydoc.share.keys()));
+			const fileCheckInterval = setInterval(() => {
+				if (!activeSession || activeSession.doc !== ydoc) {
+					clearInterval(fileCheckInterval);
+					return;
+				}
+				for (const [key] of ydoc.share) {
+					if (key.startsWith('file:') && !existingKeys.has(key)) {
+						existingKeys.add(key);
+						const fname = key.replace('file:', '');
+						openSandbox(activeSession.id, fname, '').then(newDoc => {
+							if (activeSession) {
+								addFileToSession(activeSession, newDoc, false, fname, null);
+							}
+						});
+					}
+				}
+			}, 500);
+			context.subscriptions.push({ dispose: () => clearInterval(fileCheckInterval) });
+
+			setupWsOnClose(ws, sessionsView);
+			sessionsView.update();
+			updateStatusBar();
+			vscode.window.showInformationMessage(`Joined session with ${session.host}`);
 		}),
 
 		vscode.commands.registerCommand("zeropr.endSession", async (sessionItem?: Session) => {
-			if (activeDoc && originalFilePath) {
-				const ytext = activeDoc.getText('content')
-				const answer = await vscode.window.showInformationMessage(
-					`Save changes to ${originalFilePath.split('/').pop()}?`,
-					'Save', 'Discard'
-				)
-				if (answer === 'Save') {
-					const uri = vscode.Uri.file(originalFilePath)
-					const encoder = new TextEncoder()
-					await vscode.workspace.fs.writeFile(uri, encoder.encode(ytext.toString()))
+			if (activeSession) {
+				for (const file of activeSession.files.values()) {
+					if (file.originalFilePath) {
+						const ytext = activeSession.doc.getText(file.ytextKey);
+						const answer = await vscode.window.showInformationMessage(
+							`Save changes to ${file.originalFilePath.split('/').pop()}?`,
+							'Save', 'Discard'
+						);
+						if (answer === 'Save') {
+							const uri = vscode.Uri.file(file.originalFilePath);
+							const encoder = new TextEncoder();
+							await vscode.workspace.fs.writeFile(uri, encoder.encode(ytext.toString()));
+						}
+					}
 				}
 			}
-			isEndingSession = true
-			if (sessionItem) {
-				await endSession(sessionItem.id)
-			} else if (activeSessionId) {
-				await endSession(activeSessionId)
+			isEndingSession = true;
+			const sessionId = sessionItem?.id || activeSession?.id;
+			if (sessionId) {
+				await endSession(sessionId);
 			}
-			cleanupSession()
-			sessionsView.update()
+			await cleanupSession();
+			sessionsView.update();
 		}),
 
 		vscode.commands.registerCommand("zeropr.leaveSession", async (sessionItem?: Session) => {
-			isEndingSession = true
-			if (sessionItem) {
-				await endSession(sessionItem.id)
+			isEndingSession = true;
+			const sessionId = sessionItem?.id || activeSession?.id;
+			if (sessionId) {
+				await endSession(sessionId);
 			}
-			cleanupSession()
-			sessionsView.update()
+			await cleanupSession();
+			sessionsView.update();
+		}),
+
+		vscode.commands.registerCommand("zeropr.addFile", async () => {
+			if (!activeSession) {
+				vscode.window.showWarningMessage("No active session — create or join one first");
+				return;
+			}
+			if (!activeSession.isHost) {
+				vscode.window.showWarningMessage("Only the host can add files to the session");
+				return;
+			}
+			const editor = vscode.window.activeTextEditor;
+			if (!editor) {
+				vscode.window.showWarningMessage("Open a file to add to the session");
+				return;
+			}
+			const filePath = editor.document.uri.fsPath;
+			const filename = `[ZeroPR] ${filePath.split('/').pop() || 'untitled'}`;
+
+			if (activeSession.files.has(filename)) {
+				vscode.window.showWarningMessage("This file is already in the session");
+				return;
+			}
+
+			const fileContent = editor.document.getText();
+			const doc = await openSandbox(activeSession.id, filename, fileContent);
+			addFileToSession(activeSession, doc, true, filename, filePath);
+			updateStatusBar();
+			vscode.window.showInformationMessage(`Added ${filePath.split('/').pop()} to session`);
 		}),
 
 		vscode.commands.registerCommand('zeropr.undo', () => {
-			activeBinding?.undoManager.undo()
+			const editor = vscode.window.activeTextEditor;
+			if (!editor || !activeSession) { return; }
+			for (const file of activeSession.files.values()) {
+				if (file.document === editor.document) {
+					file.binding.undoManager.undo();
+					return;
+				}
+			}
 		}),
 
 		vscode.commands.registerCommand('zeropr.redo', () => {
-			activeBinding?.undoManager.redo()
+			const editor = vscode.window.activeTextEditor;
+			if (!editor || !activeSession) { return; }
+			for (const file of activeSession.files.values()) {
+				if (file.document === editor.document) {
+					file.binding.undoManager.redo();
+					return;
+				}
+			}
 		}),
 
-		vscode.commands.registerCommand('zeropr.helloWorld', () => {
-			vscode.window.showInformationMessage('Hello World from zeropr!')
-		})
-	)
+	);
 
-	console.log('ZeroPR extension is now active!')
 }
 
 export function deactivate() {
-	isEndingSession = true
-	cleanupSession()
+	isEndingSession = true;
+	cleanupSession();
 }
