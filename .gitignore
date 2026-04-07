@@ -6,3 +6,4 @@ out/
 .pnpm-store/
 docs/
 dist/
+exploration/
