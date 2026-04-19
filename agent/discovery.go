@@ -78,15 +78,20 @@ func startDiscovery() {
 	}
 
 	serviceName := setup.Type + "." + service.Domain + "."
-	go dnssd.LookupType(ctx, serviceName, addFn, rmFn)
+
+	queryCtx, queryCancel := context.WithCancel(ctx)
+	go dnssd.LookupType(queryCtx, serviceName, addFn, rmFn)
 
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
+				queryCancel()
 				return
 			case <-time.After(60 * time.Second):
-				go dnssd.LookupType(ctx, serviceName, addFn, rmFn)
+				queryCancel()
+				queryCtx, queryCancel = context.WithCancel(ctx)
+				go dnssd.LookupType(queryCtx, serviceName, addFn, rmFn)
 			}
 		}
 	}()

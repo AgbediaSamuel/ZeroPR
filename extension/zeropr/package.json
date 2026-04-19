@@ -1,8 +1,29 @@
 {
   "name": "zeropr",
-  "displayName": "zeropr",
-  "description": "Reinventing developer collaboration",
+  "displayName": "ZeroPR",
+  "description": "Peer-to-peer collaborative code editing over your local network. No cloud, no accounts, no internet.",
   "version": "0.0.1",
+  "publisher": "SamuelAgbedia",
+  "license": "MIT",
+  "icon": "assets/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AgbediaSamuel/ZeroPR"
+  },
+  "bugs": {
+    "url": "https://github.com/AgbediaSamuel/ZeroPR/issues"
+  },
+  "homepage": "https://github.com/AgbediaSamuel/ZeroPR#readme",
+  "keywords": [
+    "collaboration",
+    "pair programming",
+    "live share",
+    "crdt",
+    "peer-to-peer",
+    "local network",
+    "yjs",
+    "mdns"
+  ],
   "engines": {
     "vscode": "^1.109.0"
   },

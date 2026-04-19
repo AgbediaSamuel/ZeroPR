@@ -3,6 +3,7 @@
 out/**
 node_modules/**
 src/**
+test/**
 .gitignore
 .yarnrc
 esbuild.js
@@ -12,3 +13,8 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.vscode-test.*
+**/.DS_Store
+assets/icon-marketplace.svg
+pnpm-lock.yaml
+package-lock.json
+yarn.lock

@@ -161,6 +161,7 @@ func getAllSessions(w http.ResponseWriter, req *http.Request) {
 func main() {
 	fmt.Println("ZeroPR agent starting on :9080")
 	http.HandleFunc("/api", server)
+	http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	http.HandleFunc("/api/peers", readPeers)
 	http.HandleFunc("/api/broadcast/start", startBroadcast)
 	http.HandleFunc("/api/broadcast/stop", stopBroadcast)

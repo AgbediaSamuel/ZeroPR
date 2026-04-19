@@ -7,6 +7,7 @@ import { YjsProvider } from './yjsProvider';
 import { YjsBinding } from './yjsBinding';
 import { ZeroPRFileSystem } from './zeroprFs';
 import { CursorPresence } from './cursorPresence';
+import { startAgent, stopAgent } from './agentProcess';
 
 interface ActiveFile {
 	binding: YjsBinding
@@ -128,7 +129,13 @@ function setupWsOnClose(ws: WebSocket, sessionsView: Sessions) {
 	};
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
+	try {
+		await startAgent(context);
+	} catch (err) {
+		vscode.window.showErrorMessage(`ZeroPR: ${(err as Error).message}`);
+	}
+
 	zeroprFs = new ZeroPRFileSystem();
 	context.subscriptions.push(
 		vscode.workspace.registerFileSystemProvider('zeropr', zeroprFs, { isCaseSensitive: true })
@@ -398,4 +405,5 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
 	isEndingSession = true;
 	cleanupSession();
+	stopAgent();
 }
