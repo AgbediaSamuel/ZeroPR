@@ -1,56 +1,36 @@
-# ZeroPR Extension
+# ZeroPR
 
-VS Code extension for real-time collaborative editing over the local network.
+Real-time collaborative editing over your local network. No cloud, no account, no internet — just be on the same Wi-Fi.
 
-## What It Does
+## Features
 
-- Discovers peers and displays them in the sidebar
-- Creates and joins collaborative editing sessions
-- Syncs document changes in real time using Yjs CRDTs
-- Shows remote cursor positions and selections
-- Per-user undo/redo that doesn't affect your collaborator
-- Sandboxes all edits in a virtual `zeropr://` filesystem
+- **Peer discovery** over mDNS — people on your network show up in the sidebar automatically
+- **Live co-editing** powered by Yjs CRDTs — both sides can type at once and stay in sync
+- **Remote cursors and selections** so you can see where your collaborator is working
+- **Per-user undo/redo** — Cmd+Z only undoes *your* edits, not theirs
+- **Sandboxed edits** in a virtual `zeropr://` filesystem — your original files stay untouched until you save
 
-## Build and Run
+## Getting Started
 
-```sh
-pnpm install
-```
-
-Open this folder in VS Code and press F5 to launch the Extension Development Host.
-
-Build without launching:
-
-```sh
-pnpm run compile
-```
+1. Open the **ZeroPR** sidebar from the Activity Bar.
+2. Click **Start Search** — nearby peers running ZeroPR will appear.
+3. Right-click a peer and choose **Invite to Session**, or accept an incoming invite under **Sessions**.
+4. Edit together. When you're done, the host ends the session and chooses whether to save.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| Start Search | Begin mDNS peer discovery |
-| Stop Search | Stop discovery and clear peers |
+| Start Search | Begin discovering peers on your network |
+| Stop Search | Stop discovery and clear the peers list |
 | Invite to Session | Create a session and invite a peer |
 | Join Session | Join an incoming session |
-| Leave Session | Leave as guest |
-| End Session | End as host (prompts to save) |
-| Add File to Session | Add another file (host only) |
-| Refresh Peers | Refresh the peers list |
-| Refresh Sessions | Refresh the sessions list |
+| Add File to Session | Share another file with your collaborator (host only) |
+| Leave Session | Leave the session as a guest |
+| End Session | End the session as host (prompts to save) |
 
-Undo/Redo (Cmd+Z / Cmd+Shift+Z) is automatically overridden in `zeropr://` files to use per-user undo history.
+Cmd+Z / Cmd+Shift+Z are automatically rerouted inside `zeropr://` files so your undo history is independent from your collaborator's.
 
-## Testing
+## Requirements
 
-```sh
-tsx test/run-all.ts
-```
-
-8 suites, 359 tests: sync, binding, awareness, multifile, agent, edge-cases, stress, endurance.
-
-## Dependencies
-
-- [yjs](https://github.com/yjs/yjs)
-- [y-protocols](https://github.com/yjs/y-protocols)
-- [lib0](https://github.com/dmonad/lib0)
+Both participants must be on the same local network and have the ZeroPR extension installed. No sign-in or internet connection is needed.
